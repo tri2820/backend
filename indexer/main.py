@@ -8,6 +8,13 @@ from transformers import AutoProcessor, AutoModelForImageTextToText
 from PIL import Image
 import os
 import cv2
+from pathlib import Path
+FILES_DIR = Path("/tmp/birdview_files")
+
+# Ensure the directory exists
+FILES_DIR.mkdir(parents=True, exist_ok=True)
+
+
 
 def load_ai_model():
     # Load model with optimizations
@@ -32,10 +39,56 @@ def load_ai_model():
     def worker_function(data):
         """Simulates a long-running, CPU/GPU-intensive task on the client machine."""
         print(f"[AI Thread] Starting heavy AI workload with data: {data}")
-        model_input = data.get('input', None)
-        time.sleep(5)
 
-        result = {"status": "complete", "output": f"Client processed data: {model_input}"}
+         # Prepare optimized batch of messages and collect image names
+        messages = []
+        message_inputs = data.get('inputs', [])
+        for inp in  message_inputs:
+            file_path = FILES_DIR / inp['filepath']
+            message = [
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": "You are a helpful assistant that can understand images."}]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": str(file_path)},
+                        {"type": "text", "text": "Describe this image in detail."} 
+                    ]
+                }
+            ]
+            messages.append(message)
+
+        # Build inputs (processor returns a dict of tensors)
+        inputs = processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            padding=True,
+        )
+
+        inputs = inputs.to('cuda')
+        
+        raw_outputs = model.generate(**inputs, max_new_tokens=256)
+
+        outputs = []
+        i = 0
+        for raw_output in raw_outputs:
+            tok_ids = raw_output.cpu().tolist()
+            raw_text = processor.decode(tok_ids, skip_special_tokens=True)
+            # Keep previous logic for extracting assistant reply
+            description = raw_text.split("Assistant: ")[-1].strip()
+            # Include image name in output
+            outputs.append({
+                "id": message_inputs[i]['id'],
+                "description": description
+            })
+            i += 1
+
+        result = {"status": "complete", "output": outputs}
         print("[AI Thread] Heavy AI workload finished.")
         return json.dumps(result)
 

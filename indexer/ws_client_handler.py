@@ -9,7 +9,7 @@ async def client_handler(heavy_ai_workload):
     """
     Connects to the server with a robust, exponential backoff retry mechanism.
     """
-    uri = "ws://localhost:8040"
+    uri = "ws://localhost:8041"
     
     # --- Retry Logic Variables ---
     initial_delay = 1.0  # Initial delay of 1 second
@@ -24,6 +24,10 @@ async def client_handler(heavy_ai_workload):
                     # and RESET the reconnect delay to its initial value.
                     print(f"[Main] Connection successful to {uri}.")
                     reconnect_delay = initial_delay
+                    
+                    # Send the "i_am_worker" message upon connection.
+                    print("[Main] Sending 'i_am_worker' message to server...")
+                    await websocket.send(json.dumps({"type": "i_am_worker"}))
                     
                     async for message in websocket:
                         print(f"[Main] Received task from server: {message}")
@@ -56,7 +60,3 @@ async def client_handler(heavy_ai_workload):
             except Exception as e:
                 print(f"[Main] An unexpected error occurred: {e}. Retrying in 5 seconds...")
                 await asyncio.sleep(5)
-
-
-if __name__ == "__main__":
-    asyncio.run(client_handler())
