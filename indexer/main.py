@@ -8,13 +8,7 @@ from transformers import AutoProcessor, AutoModelForImageTextToText
 from PIL import Image
 import os
 import cv2
-from pathlib import Path
-FILES_DIR = Path("/tmp/birdview_files")
-
-# Ensure the directory exists
-FILES_DIR.mkdir(parents=True, exist_ok=True)
-
-
+from definitions import FILES_DIR
 
 def load_ai_model():
     # Load model with optimizations
@@ -96,4 +90,4 @@ def load_ai_model():
 
 if __name__ == "__main__":
     worker_function = load_ai_model()
-    asyncio.run(client_handler(worker_function))
+    asyncio.run(client_handler("image_description", worker_function))

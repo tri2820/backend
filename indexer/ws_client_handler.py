@@ -5,7 +5,7 @@ import time
 import json
 import random
 
-async def client_handler(heavy_ai_workload):
+async def client_handler(worker_type, heavy_ai_workload):
     """
     Connects to the server with a robust, exponential backoff retry mechanism.
     """
@@ -27,7 +27,7 @@ async def client_handler(heavy_ai_workload):
                     
                     # Send the "i_am_worker" message upon connection.
                     print("[Main] Sending 'i_am_worker' message to server...")
-                    await websocket.send(json.dumps({"type": "i_am_worker"}))
+                    await websocket.send(json.dumps({"type": "i_am_worker", "worker_type": worker_type}))
                     
                     async for message in websocket:
                         print(f"[Main] Received task from server: {message}")

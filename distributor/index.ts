@@ -8,6 +8,7 @@ type Client = {
     id: string;
     ws: ServerWebSocket<unknown>;
     is_worker?: boolean;
+    worker_type?: string;
 }
 const clients = new Map<string, Client>();
 const PORT = 8041;
@@ -51,6 +52,7 @@ Bun.serve({
             if (parsed.header.type === "i_am_worker") {
                 if (!client) return;
                 client.is_worker = true;
+                client.worker_type = parsed.header.worker_type;
                 return;
             }
 
@@ -71,19 +73,19 @@ Bun.serve({
                 console.log(`Gathered ${gathered.length} items.`);
                 if (gathered.length >= 32) {
                     console.log("Gather threshold reached. Distributing jobs to workers...");
-                    // Simplify: all to the first worker
-                    const worker = [...clients.values()].find(c => c.is_worker);
-                    if (!worker) {
-                        console.log("No workers connected to distribute jobs.");
-                        return;
-                    }
+
 
                     const inputs = structuredClone(gathered);
                     gathered = []
 
-                    worker.ws.send(createMessage({
-                        inputs,
-                        type: 'index_job'
+                    const imageDescriptionWorker = [...clients.values()].find(c => c.is_worker && c.worker_type === 'image_description');
+                    imageDescriptionWorker?.ws.send(createMessage({
+                        inputs
+                    }));
+
+                    const embeddingWorker = [...clients.values()].find(c => c.is_worker && c.worker_type === 'embedding');
+                    embeddingWorker?.ws.send(createMessage({
+                        inputs
                     }));
                 }
 
