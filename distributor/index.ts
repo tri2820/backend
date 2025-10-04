@@ -7,20 +7,36 @@ import { mkdirSync } from "fs";
 type Client = {
     id: string;
     ws: ServerWebSocket<unknown>;
-    is_worker?: boolean;
-    worker_type?: string;
+    worker_config?: {
+        subscribed_events: string[];
+        max_batch_size: number;
+        max_latency_ms: number;
+        gathered: { id: string, filepath: string }[];
+        send_timeout?: NodeJS.Timeout;
+    },
+
 }
 const clients = new Map<string, Client>();
 const PORT = 8041;
 
-const tempdir = '/tmp/birdview_files';
+const tempdir = '/home/tri/birdview_files';
 if (!existsSync(tempdir)) {
     mkdirSync(tempdir, { recursive: true });
 }
 
 
 let job_map = new Map<string, { client_id: string }>();
-let gathered: { id: string, filepath: string }[] = [];
+
+function sendJobsToWorkers(c: Client) {
+    // This function might be called from timeout, so check everything
+    if (!c.ws || c.ws.readyState !== WebSocket.OPEN) return;
+    if (!c.worker_config) return;
+    const inputs = structuredClone(c.worker_config.gathered);
+    c.worker_config.gathered = []
+    c.ws.send(createMessage({
+        inputs
+    }));
+}
 
 // This server receives jobs from media server
 // Gather jobs and distribute to workers
@@ -37,7 +53,7 @@ Bun.serve({
         open(ws) {
             console.log("WebSocket opened!");
             const id = crypto.randomUUID();
-            clients.set(id, { id, ws });
+            clients.set(id, { id, ws, });
         },
         async message(ws, message) {
             console.log("Received message:", message);
@@ -51,49 +67,76 @@ Bun.serve({
 
             if (parsed.header.type === "i_am_worker") {
                 if (!client) return;
-                client.is_worker = true;
-                client.worker_type = parsed.header.worker_type;
+                if (!parsed.header.worker_config || !Array.isArray(parsed.header.worker_config.subscribed_events)) {
+                    console.error("Invalid worker_config from worker.");
+                    return;
+                }
+                client.worker_config = {
+                    max_batch_size: 32,
+                    max_latency_ms: 30000,
+                    subscribed_events: [],
+                    gathered: [],
+                };
+
+                client.worker_config = { ...client.worker_config, ...parsed.header.worker_config };
                 return;
             }
 
             if (parsed.header.type === "index") {
                 if (!client) return;
                 if (!parsed.buffer || !parsed.header.id) return;
-                // console.log("Received index message:", parsed);
 
                 // Save buffer to file
                 const filepath = `${tempdir}/${parsed.header.id}.jpg`;
                 await Bun.write(filepath, parsed.buffer);
 
-                gathered.push({ id: parsed.header.id, filepath });
-
-                // This job is sent by client.id
+                // For mapping job id to client id (sending back results)
                 job_map.set(parsed.header.id, { client_id: client.id });
 
-                console.log(`Gathered ${gathered.length} items.`);
-                if (gathered.length >= 32) {
-                    console.log("Gather threshold reached. Distributing jobs to workers...");
-
-
-                    const inputs = structuredClone(gathered);
-                    gathered = []
-
-                    const imageDescriptionWorker = [...clients.values()].find(c => c.is_worker && c.worker_type === 'image_description');
-                    imageDescriptionWorker?.ws.send(createMessage({
-                        inputs
-                    }));
-
-                    const embeddingWorker = [...clients.values()].find(c => c.is_worker && c.worker_type === 'embedding');
-                    embeddingWorker?.ws.send(createMessage({
-                        inputs
-                    }));
+                for (const c of clients.values()) {
+                    if (!c.worker_config || !c.worker_config.subscribed_events.includes(parsed.header.type)) continue;
+                    c.worker_config.gathered.push({ id: parsed.header.id, filepath });
+                    console.log(`Gathered ${c.worker_config.gathered.length} items.`);
+                    if (c.worker_config.send_timeout) clearTimeout(c.worker_config.send_timeout);
+                    if (c.worker_config.gathered.length < (c.worker_config.max_batch_size)) {
+                        c.worker_config.send_timeout = setTimeout(() => {
+                            sendJobsToWorkers(c);
+                        }, c.worker_config.max_latency_ms);
+                    } else {
+                        sendJobsToWorkers(c);
+                    }
                 }
-
-
             }
 
-            if (parsed.header.type === "index_result") {
-                console.log("Received index result from worker:", parsed);
+            if (parsed.header.type === "embedding_result") {
+                const embeddings = parsed.header.output;
+                // Sanity check
+                if (!embeddings || !Array.isArray(embeddings)) return;
+
+                for (const embedding of embeddings) {
+                    const job = job_map.get(embedding.id);
+                    if (!job) {
+                        console.error(`No job found for embedding id: ${embedding.id}`);
+                        continue;
+                    }
+                    const client = clients.get(job.client_id);
+                    if (!client) {
+                        console.error(`No client found for job id: ${job.client_id}`);
+                        continue;
+                    }
+
+                    // Send result back to the original client
+                    const responseMessage = createMessage({
+                        type: 'embedding_result',
+                        id: embedding.id,
+                        embedding: embedding.embedding
+                    });
+                    client.ws.send(responseMessage);
+                    console.log(`Sent embedding to client ${client.id} for job ${embedding.id}`);
+                }
+            }
+
+            if (parsed.header.type === "image_description_result") {
                 const outputs = parsed.header.output;
                 if (!outputs || !Array.isArray(outputs)) return;
 
@@ -111,16 +154,16 @@ Bun.serve({
 
                     // Send result back to the original client
                     const responseMessage = createMessage({
-                        type: 'index_result',
+                        type: 'image_description_result',
                         id: output.id,
                         description: output.description
                     });
                     client.ws.send(responseMessage);
-                    console.log(`Sent index result to client ${client.id} for job ${output.id}`);
+                    console.log(`Sent image_description to client ${client.id} for job ${output.id}`);
                 }
             }
         },
-        // This is the only change from your original code.
+
         close(ws) {
             // Find the client associated with the disconnected websocket
             let clientId: string | null = null;

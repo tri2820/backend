@@ -8,7 +8,6 @@ from transformers import AutoProcessor, AutoModelForImageTextToText
 from PIL import Image
 import os
 import cv2
-from definitions import FILES_DIR
 
 def load_ai_model():
     # Load model with optimizations
@@ -38,7 +37,7 @@ def load_ai_model():
         messages = []
         message_inputs = data.get('inputs', [])
         for inp in  message_inputs:
-            file_path = FILES_DIR / inp['filepath']
+            file_path = inp['filepath']
             message = [
                 {
                     "role": "system",
@@ -82,7 +81,7 @@ def load_ai_model():
             })
             i += 1
 
-        result = {"type": "index_result", "output": outputs}
+        result = {"type": "image_description_result", "output": outputs}
         print("[AI Thread] Heavy AI workload finished.")
         return json.dumps(result)
 
@@ -90,4 +89,4 @@ def load_ai_model():
 
 if __name__ == "__main__":
     worker_function = load_ai_model()
-    asyncio.run(client_handler("image_description", worker_function))
+    asyncio.run(client_handler(worker_function, {"subscribed_events": ["index"]}))
