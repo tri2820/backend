@@ -71,7 +71,7 @@ def load_ai_model():
         )
 
         inputs = inputs.to('cuda')
-        
+
         raw_outputs = model.generate(**inputs, max_new_tokens=256)
 
         outputs = []
@@ -88,7 +88,7 @@ def load_ai_model():
             })
             i += 1
 
-        result = {"status": "complete", "output": outputs}
+        result = {"type": "index_result", "output": outputs}
         print("[AI Thread] Heavy AI workload finished.")
         return json.dumps(result)
 

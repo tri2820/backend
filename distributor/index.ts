@@ -1,6 +1,6 @@
 import type { ServerWebSocket } from "bun";
 // I have restored your original import. My apologies for changing it.
-import { createMessage, parseWsMessage } from "./parseMessage";
+import { createMessage, parseMessage } from "./message";
 import { existsSync } from "fs";
 import { mkdirSync } from "fs";
 
@@ -17,6 +17,8 @@ if (!existsSync(tempdir)) {
     mkdirSync(tempdir, { recursive: true });
 }
 
+
+let job_map = new Map<string, { client_id: string }>();
 let gathered: { id: string, filepath: string }[] = [];
 
 // This server receives jobs from media server
@@ -37,7 +39,8 @@ Bun.serve({
             clients.set(id, { id, ws });
         },
         async message(ws, message) {
-            const parsed = parseWsMessage(message);
+            console.log("Received message:", message);
+            const parsed = parseMessage(message);
             if (parsed.error) {
                 console.error("Failed to parse message:", parsed.error);
                 return;
@@ -52,14 +55,18 @@ Bun.serve({
             }
 
             if (parsed.header.type === "index") {
+                if (!client) return;
                 if (!parsed.buffer || !parsed.header.id) return;
-                console.log("Received index message:", parsed);
+                // console.log("Received index message:", parsed);
 
                 // Save buffer to file
                 const filepath = `${tempdir}/${parsed.header.id}.jpg`;
                 await Bun.write(filepath, parsed.buffer);
 
                 gathered.push({ id: parsed.header.id, filepath });
+
+                // This job is sent by client.id
+                job_map.set(parsed.header.id, { client_id: client.id });
 
                 console.log(`Gathered ${gathered.length} items.`);
                 if (gathered.length >= 32) {
@@ -74,13 +81,41 @@ Bun.serve({
                     const inputs = structuredClone(gathered);
                     gathered = []
 
-                    worker.ws.send(JSON.stringify({
+                    worker.ws.send(createMessage({
                         inputs,
                         type: 'index_job'
                     }));
                 }
 
 
+            }
+
+            if (parsed.header.type === "index_result") {
+                console.log("Received index result from worker:", parsed);
+                const outputs = parsed.header.output;
+                if (!outputs || !Array.isArray(outputs)) return;
+
+                for (const output of outputs) {
+                    const job = job_map.get(output.id);
+                    if (!job) {
+                        console.error(`No job found for output id: ${output.id}`);
+                        continue;
+                    }
+                    const client = clients.get(job.client_id);
+                    if (!client) {
+                        console.error(`No client found for job id: ${job.client_id}`);
+                        continue;
+                    }
+
+                    // Send result back to the original client
+                    const responseMessage = createMessage({
+                        type: 'index_result',
+                        id: output.id,
+                        description: output.description
+                    });
+                    client.ws.send(responseMessage);
+                    console.log(`Sent index result to client ${client.id} for job ${output.id}`);
+                }
             }
         },
         // This is the only change from your original code.
