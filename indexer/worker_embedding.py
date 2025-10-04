@@ -145,8 +145,10 @@ def load_ai_model():
                     "embedding": embeddings[i].tolist()
                 })
         
+        result_type = os.environ.get("RESULT_TYPE", "embedding_result")
+      
         result = {
-            "type": "embedding_result", 
+            "type": result_type,
             "output": result_embeddings
         }
         print("[Embedding Thread] Embedding workload finished.")

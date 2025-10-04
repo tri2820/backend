@@ -17,7 +17,7 @@ tmux send-keys -t $SESSION:worker_embedding "cd indexer && source .venv/bin/acti
 
 # This one is for fast, reactive search tasks
 tmux new-window -t $SESSION -n worker_embedding_search
-tmux send-keys -t $SESSION:worker_embedding_search "cd indexer && source .venv/bin/activate && SUBSCRIBED_EVENTS=\"search\" MAX_LATENCY_MS=\"500\" python -m worker_embedding" C-m
+tmux send-keys -t $SESSION:worker_embedding_search "cd indexer && source .venv/bin/activate && SUBSCRIBED_EVENTS=\"search\" MAX_LATENCY_MS=\"500\" RESULT_TYPE=\"search_result\" python -m worker_embedding" C-m
 
 # Attach when ready
 tmux attach -t $SESSION
