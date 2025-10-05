@@ -11,6 +11,10 @@ tmux send-keys -t $SESSION:image_description "cd indexer && source .venv/bin/act
 tmux new-window -t $SESSION -n distributor
 tmux send-keys -t $SESSION:distributor "cd distributor && bun run index.ts" C-m
 
+
+tmux new-window -t $SESSION -n worker_summarize
+tmux send-keys -t $SESSION:worker_summarize "cd indexer && source .venv/bin/activate && python -m worker_summarize" C-m
+
 # This one is for general indexing tasks
 tmux new-window -t $SESSION -n worker_embedding
 tmux send-keys -t $SESSION:worker_embedding "cd indexer && source .venv/bin/activate && python -m worker_embedding" C-m

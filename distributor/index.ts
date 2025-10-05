@@ -11,7 +11,7 @@ type Client = {
         subscribed_events: string[];
         max_batch_size: number;
         max_latency_ms: number;
-        gathered: { id: string, filepath: string }[];
+        gathered: any[];
         send_timeout?: NodeJS.Timeout;
     },
 
@@ -56,7 +56,7 @@ Bun.serve({
             clients.set(id, { id, ws, });
         },
         async message(ws, message) {
-            console.log("Received message:", message);
+
             const parsed = parseMessage(message);
             if (parsed.error) {
                 console.error("Failed to parse message:", parsed.error);
@@ -96,6 +96,34 @@ Bun.serve({
                 for (const c of clients.values()) {
                     if (!c.worker_config || !c.worker_config.subscribed_events.includes(parsed.header.type)) continue;
                     c.worker_config.gathered.push({ id: parsed.header.id, filepath });
+                    if (c.worker_config.send_timeout) clearTimeout(c.worker_config.send_timeout);
+                    if (c.worker_config.gathered.length < (c.worker_config.max_batch_size)) {
+                        c.worker_config.send_timeout = setTimeout(() => {
+                            sendJobsToWorkers(c);
+                        }, c.worker_config.max_latency_ms);
+                    } else {
+                        sendJobsToWorkers(c);
+                    }
+                }
+            }
+
+
+            if (parsed.header.type === "summarize") {
+                console.log("Received summarize job:", parsed);
+                if (!client) return;
+                console.log('Got A')
+                if (!parsed.header.id || !parsed.header.passages || !Array.isArray(parsed.header.passages) || !parsed.header.query) return;
+                console.log('Got B')
+
+                // For mapping job id to client id (sending back results)
+                job_map.set(parsed.header.id, { client_id: client.id });
+
+                console.log('Got B2', clients);
+
+                for (const c of clients.values()) {
+                    if (!c.worker_config || !c.worker_config.subscribed_events.includes(parsed.header.type)) continue;
+                    console.log('Got C')
+                    c.worker_config.gathered.push({ id: parsed.header.id, passages: parsed.header.passages, query: parsed.header.query });
                     console.log(`Gathered ${c.worker_config.gathered.length} items.`);
                     if (c.worker_config.send_timeout) clearTimeout(c.worker_config.send_timeout);
                     if (c.worker_config.gathered.length < (c.worker_config.max_batch_size)) {
@@ -105,6 +133,33 @@ Bun.serve({
                     } else {
                         sendJobsToWorkers(c);
                     }
+                }
+            }
+
+            if (parsed.header.type === "summarize_result") {
+                const outputs = parsed.header.output;
+                if (!outputs || !Array.isArray(outputs)) return;
+
+                for (const output of outputs) {
+                    const job = job_map.get(output.id);
+                    if (!job) {
+                        console.error(`No job found for output id: ${output.id}`);
+                        continue;
+                    }
+                    const client = clients.get(job.client_id);
+                    if (!client) {
+                        console.error(`No client found for job id: ${job.client_id}`);
+                        continue;
+                    }
+
+                    // Send result back to the original client
+                    const responseMessage = createMessage({
+                        type: 'summarize_result',
+                        id: output.id,
+                        answer: output.answer
+                    });
+                    client.ws.send(responseMessage);
+                    console.log(`Sent summary to client ${client.id} for job ${output.id}`);
                 }
             }
 
@@ -132,7 +187,6 @@ Bun.serve({
                         embedding: embedding.embedding
                     });
                     client.ws.send(responseMessage);
-                    console.log(`Sent embedding to client ${client.id} for job ${embedding.id}`);
                 }
             }
 
@@ -159,7 +213,6 @@ Bun.serve({
                         description: output.description
                     });
                     client.ws.send(responseMessage);
-                    console.log(`Sent image_description to client ${client.id} for job ${output.id}`);
                 }
             }
         },
