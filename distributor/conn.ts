@@ -1,0 +1,160 @@
+import * as lancedb from "@lancedb/lancedb";
+
+import { initializeDatabase } from "./database";
+import path from "path";
+
+
+export const APP_DIR = '/home/tri/birdview';
+export const FILES_DIR = path.join(APP_DIR, 'files');
+export const DATABASE_PATH = path.join(APP_DIR, 'database');
+export const DATABASE_EMBEDDING_DIMENSION = 2048;
+
+// Make sure these directories exist
+import fs from 'fs/promises';
+await fs.mkdir(APP_DIR, { recursive: true });
+await fs.mkdir(FILES_DIR, { recursive: true });
+await fs.mkdir(DATABASE_PATH, { recursive: true });
+
+export type MediaUnit = {
+    id: string;
+    tenant_id: string;
+    description?: string | null;
+    embedding?: number[] | null;
+    at_time: Date;
+    media_id: string;
+    path: string;
+}
+
+
+export const connection = await initializeDatabase({
+    databasePath: DATABASE_PATH,
+    overwrite: false,
+    embeddingDimension: DATABASE_EMBEDDING_DIMENSION
+});
+export const table_media_units = await connection.openTable('media_units');
+
+
+
+let media_unit_rows: MediaUnit[] = []
+let add_media_unit_timeout: NodeJS.Timeout | null = null;
+export function addMediaUnit(mediaUnit: MediaUnit) {
+    media_unit_rows.push({
+        ...mediaUnit,
+        at_time: new Date(mediaUnit.at_time),
+        description: mediaUnit.description ?? null,
+        embedding: mediaUnit.embedding ? mediaUnit.embedding : null,
+    });
+
+    if (add_media_unit_timeout) clearTimeout(add_media_unit_timeout);
+
+    // If we have more than 100 rows, add immediately
+    if (media_unit_rows.length > 100) {
+        const toAdd = media_unit_rows;
+        media_unit_rows = [];
+        table_media_units.add(toAdd);
+        return;
+    }
+
+    add_media_unit_timeout = setTimeout(async () => {
+        const toAdd = media_unit_rows;
+        media_unit_rows = [];
+        await table_media_units.add(toAdd);
+    }, 1000);
+}
+
+
+export function partialMediaUnitToUpdate(mediaUnit: Partial<MediaUnit> & { id: string }, coalesce?: Record<string, any>) {
+
+    const update: Record<string, any> = {};
+    for (const key in mediaUnit) {
+        if (mediaUnit[key as keyof Partial<MediaUnit>] !== undefined) {
+            update[key] = mediaUnit[key as keyof Partial<MediaUnit>];
+        }
+    }
+
+    for (const key in coalesce) {
+        if (update[key] === undefined || update[key] === null) {
+            update[key] = coalesce[key];
+        }
+    }
+
+    return update;
+}
+
+/**
+ * Updates a media unit record in the database using the native update method.
+ */
+export async function updateMediaUnit(mediaUnit: Partial<MediaUnit> & { id: string }): Promise<void> {
+    try {
+        const update = partialMediaUnitToUpdate(mediaUnit);
+        await table_media_units.update({
+            where: `id = '${mediaUnit.id}'`,
+            values: update
+        });
+    } catch (error) {
+        console.error("Error updating media unit:", error);
+    }
+}
+
+export async function updateMediaUnitBatch(mediaUnits: (Partial<MediaUnit> & { id: string })[]): Promise<void> {
+    // Temporary fix before NPM package is updated
+    const updates = mediaUnits.map(mu => partialMediaUnitToUpdate(mu, { embedding: null }));
+    await table_media_units.mergeInsert("id")
+        .whenMatchedUpdateAll()
+        // ignore unmatched (not inserted)
+        .execute(updates);
+}
+
+
+/**
+ * Searches for media units by embedding similarity.
+ */
+export async function searchMediaUnitsByEmbedding(queryEmbedding: number[]): Promise<MediaUnit[] | null> {
+    try {
+        const results = table_media_units.search(queryEmbedding).limit(50);
+        const resultArray = await results.toArray();
+        return resultArray;
+    } catch (error) {
+        console.error("Error searching media units by embedding:", error);
+        return null;
+    }
+}
+
+/**
+ * Retrieves media units with pagination.
+ */
+export async function getMediaUnitsPaginated(
+    page: number = 1,
+    limit: number = 10
+): Promise<{ items: MediaUnit[], total: number } | null> {
+    try {
+
+        // Get total count
+        const total = await table_media_units.countRows();
+
+        // Calculate offset based on page and limit
+        const offset = (page - 1) * limit;
+
+        // Query with limit and skip for pagination
+        const allResults = await table_media_units
+            .toArrow()
+            .then(arrowTable => {
+                // Convert to JS array and sort by at_time in descending order 
+                const rows = arrowTable.toArray().sort((a, b) =>
+                    new Date(b.at_time).getTime() - new Date(a.at_time).getTime()
+                );
+
+                // Apply pagination by slicing the sorted array
+                const paginatedRows = rows.slice(offset, offset + limit);
+                return paginatedRows;
+            });
+
+        return {
+            items: allResults,
+            total
+        };
+    } catch (error) {
+        console.error("Error retrieving paginated media units:", error);
+        return null;
+    }
+}

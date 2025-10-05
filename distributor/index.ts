@@ -1,11 +1,16 @@
 import type { ServerWebSocket } from "bun";
 // I have restored your original import. My apologies for changing it.
+import { addMediaUnit, FILES_DIR, updateMediaUnitBatch } from "./conn";
 import { createMessage, parseMessage } from "./message";
-import { existsSync } from "fs";
-import { mkdirSync } from "fs";
+import * as jose from 'jose'
+import handleAsWorker from "./handlers/worker";
+import { handleAsTenant } from "./handlers/tenant";
 
-type Client = {
+export type Client = {
     id: string;
+    authenticated?: {
+        tenant_id: string;
+    }
     ws: ServerWebSocket<unknown>;
     worker_config?: {
         subscribed_events: string[];
@@ -16,18 +21,12 @@ type Client = {
     },
 
 }
-const clients = new Map<string, Client>();
-const PORT = 8041;
+const clients = new Map<ServerWebSocket<unknown>, Client>();
+const PORT = 8040;
 
-const tempdir = '/home/tri/birdview_files';
-if (!existsSync(tempdir)) {
-    mkdirSync(tempdir, { recursive: true });
-}
+let job_map = new Map<string, { ws: ServerWebSocket<unknown> }>();
 
-
-let job_map = new Map<string, { client_id: string }>();
-
-function sendJobsToWorkers(c: Client) {
+export function sendJobsToWorkers(c: Client) {
     // This function might be called from timeout, so check everything
     if (!c.ws || c.ws.readyState !== WebSocket.OPEN) return;
     if (!c.worker_config) return;
@@ -51,26 +50,33 @@ Bun.serve({
     },
     websocket: {
         open(ws) {
-            console.log("WebSocket opened!");
             const id = crypto.randomUUID();
-            clients.set(id, { id, ws, });
+            clients.set(ws, { id, ws, });
         },
         async message(ws, message) {
-
             const parsed = parseMessage(message);
             if (parsed.error) {
                 console.error("Failed to parse message:", parsed.error);
                 return;
             }
+            const client = clients.get(ws);
 
-            const client = [...clients.values()].find(c => c.ws === ws);
+            if (!client) return;
 
+            // === Worker registration and job distribution ===
             if (parsed.header.type === "i_am_worker") {
-                if (!client) return;
                 if (!parsed.header.worker_config || !Array.isArray(parsed.header.worker_config.subscribed_events)) {
                     console.error("Invalid worker_config from worker.");
                     return;
                 }
+
+                if (parsed.header.secret !== process.env.WORKER_SECRET) {
+                    console.error("Invalid WORKER_SECRET from worker.");
+                    ws.close(1008, "Invalid WORKER_SECRET");
+                    return;
+                }
+
+                console.log('Registered worker', client.id, parsed.header.worker_config);
                 client.worker_config = {
                     max_batch_size: 32,
                     max_latency_ms: 30000,
@@ -82,157 +88,82 @@ Bun.serve({
                 return;
             }
 
-            if (parsed.header.type === "index") {
-                if (!client) return;
-                if (!parsed.buffer || !parsed.header.id) return;
+            // === Authentication ===
+            if (parsed.header.type === 'i_am_tenant') {
+                if (client.authenticated) {
+                    console.error("Client already authenticated.");
+                    ws.close(1008, "Already authenticated");
+                    return;
+                };
 
-                // Save buffer to file
-                const filepath = `${tempdir}/${parsed.header.id}.jpg`;
-                await Bun.write(filepath, parsed.buffer);
-
-                // For mapping job id to client id (sending back results)
-                job_map.set(parsed.header.id, { client_id: client.id });
-
-                for (const c of clients.values()) {
-                    if (!c.worker_config || !c.worker_config.subscribed_events.includes(parsed.header.type)) continue;
-                    c.worker_config.gathered.push({ id: parsed.header.id, filepath });
-                    if (c.worker_config.send_timeout) clearTimeout(c.worker_config.send_timeout);
-                    if (c.worker_config.gathered.length < (c.worker_config.max_batch_size)) {
-                        c.worker_config.send_timeout = setTimeout(() => {
-                            sendJobsToWorkers(c);
-                        }, c.worker_config.max_latency_ms);
-                    } else {
-                        sendJobsToWorkers(c);
-                    }
-                }
-            }
-
-
-            if (parsed.header.type === "summarize") {
-                console.log("Received summarize job:", parsed);
-                if (!client) return;
-                console.log('Got A')
-                if (!parsed.header.id || !parsed.header.passages || !Array.isArray(parsed.header.passages) || !parsed.header.query) return;
-                console.log('Got B')
-
-                // For mapping job id to client id (sending back results)
-                job_map.set(parsed.header.id, { client_id: client.id });
-
-                console.log('Got B2', clients);
-
-                for (const c of clients.values()) {
-                    if (!c.worker_config || !c.worker_config.subscribed_events.includes(parsed.header.type)) continue;
-                    console.log('Got C')
-                    c.worker_config.gathered.push({ id: parsed.header.id, passages: parsed.header.passages, query: parsed.header.query });
-                    console.log(`Gathered ${c.worker_config.gathered.length} items.`);
-                    if (c.worker_config.send_timeout) clearTimeout(c.worker_config.send_timeout);
-                    if (c.worker_config.gathered.length < (c.worker_config.max_batch_size)) {
-                        c.worker_config.send_timeout = setTimeout(() => {
-                            sendJobsToWorkers(c);
-                        }, c.worker_config.max_latency_ms);
-                    } else {
-                        sendJobsToWorkers(c);
-                    }
-                }
-            }
-
-            if (parsed.header.type === "summarize_result") {
-                const outputs = parsed.header.output;
-                if (!outputs || !Array.isArray(outputs)) return;
-
-                for (const output of outputs) {
-                    const job = job_map.get(output.id);
-                    if (!job) {
-                        console.error(`No job found for output id: ${output.id}`);
-                        continue;
-                    }
-                    const client = clients.get(job.client_id);
-                    if (!client) {
-                        console.error(`No client found for job id: ${job.client_id}`);
-                        continue;
-                    }
-
-                    // Send result back to the original client
+                if (parsed.header.create_new) {
+                    const tenant_id = crypto.randomUUID();
+                    // Can do jti and blacklist later
+                    const token = new jose.SignJWT({ tenant_id })
+                        .setProtectedHeader({ alg: 'HS256' })
+                        .sign(new TextEncoder().encode(process.env.JWT_SECRET));
+                    client.authenticated = {
+                        tenant_id,
+                    };
+                    console.log(`Client ${client.id} authenticated as new tenant ${tenant_id}`);
                     const responseMessage = createMessage({
-                        type: 'summarize_result',
-                        id: output.id,
-                        answer: output.answer
+                        type: 'authenticated',
+                        tenant_id,
+                        auth_token: token,
                     });
-                    client.ws.send(responseMessage);
-                    console.log(`Sent summary to client ${client.id} for job ${output.id}`);
+                    ws.send(responseMessage);
+                    return;
                 }
+
+                if (parsed.header.auth_token) {
+                    // Verify JWT token
+                    try {
+                        const secret = new TextEncoder().encode(process.env.JWT_SECRET);
+                        const { payload } = await jose.jwtVerify(parsed.header.auth_token, secret, {
+                            algorithms: ['HS256'],
+                        });
+
+                        if (!payload.tenant_id || typeof payload.tenant_id !== 'string') {
+                            throw new Error("Invalid token: missing tenant_id");
+                        }
+
+                        client.authenticated = {
+                            tenant_id: payload.tenant_id,
+                        };
+                        console.log(`Client ${client.id} authenticated as tenant ${payload.tenant_id}`);
+                        const responseMessage = createMessage({
+                            type: 'authenticated',
+                            tenant_id: payload.tenant_id,
+                            // No need to send token back
+                        });
+                        ws.send(responseMessage);
+                    } catch (e) {
+                        console.error("Failed to verify token:", e);
+                        ws.close(1008, "Invalid token");
+                    }
+                    return;
+                }
+
+                console.log('Invalid i_am_tenant message, missing create_new or auth_token');
+                ws.close(1008, "Invalid i_am_tenant message");
+                return;
             }
 
-            if (parsed.header.type === "embedding_result") {
-                const embeddings = parsed.header.output;
-                // Sanity check
-                if (!embeddings || !Array.isArray(embeddings)) return;
-
-                for (const embedding of embeddings) {
-                    const job = job_map.get(embedding.id);
-                    if (!job) {
-                        console.error(`No job found for embedding id: ${embedding.id}`);
-                        continue;
-                    }
-                    const client = clients.get(job.client_id);
-                    if (!client) {
-                        console.error(`No client found for job id: ${job.client_id}`);
-                        continue;
-                    }
-
-                    // Send result back to the original client
-                    const responseMessage = createMessage({
-                        type: 'embedding_result',
-                        id: embedding.id,
-                        embedding: embedding.embedding
-                    });
-                    client.ws.send(responseMessage);
-                }
+            if (client.worker_config) {
+                await handleAsWorker(parsed, client, { clients, job_map });
+                return;
             }
 
-            if (parsed.header.type === "image_description_result") {
-                const outputs = parsed.header.output;
-                if (!outputs || !Array.isArray(outputs)) return;
-
-                for (const output of outputs) {
-                    const job = job_map.get(output.id);
-                    if (!job) {
-                        console.error(`No job found for output id: ${output.id}`);
-                        continue;
-                    }
-                    const client = clients.get(job.client_id);
-                    if (!client) {
-                        console.error(`No client found for job id: ${job.client_id}`);
-                        continue;
-                    }
-
-                    // Send result back to the original client
-                    const responseMessage = createMessage({
-                        type: 'image_description_result',
-                        id: output.id,
-                        description: output.description
-                    });
-                    client.ws.send(responseMessage);
-                }
+            if (client.authenticated) {
+                await handleAsTenant(parsed, client, { clients, job_map });
+                return;
             }
+
+            console.error("Received message from unauthenticated and non-worker client.", parsed);
+            ws.close(1008, "Unauthenticated");
         },
-
         close(ws) {
-            // Find the client associated with the disconnected websocket
-            let clientId: string | null = null;
-            for (const [id, client] of clients.entries()) {
-                if (client.ws === ws) {
-                    clientId = id;
-                    break;
-                }
-            }
-
-            // If found, remove them from the map
-            if (clientId) {
-                clients.delete(clientId);
-                console.log(`Client ${clientId} disconnected and was removed.`);
-                console.log(`Remaining clients: ${clients.size}`);
-            }
+            clients.delete(ws);
         }
     }, // handlers
 });

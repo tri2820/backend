@@ -32,7 +32,7 @@ async def client_handler(heavy_ai_workload, worker_config):
     """
     Connects to the server with a robust, exponential backoff retry mechanism.
     """
-    uri = "ws://localhost:8041"
+    uri = os.environ.get("BACKEND_WS_URL", "ws://localhost:8040")
     
     # --- Retry Logic Variables ---
     initial_delay = 1.0
@@ -60,8 +60,14 @@ async def client_handler(heavy_ai_workload, worker_config):
                     
                     # 4. Send the final, merged configuration.
                     print(f"[Main] Sending 'i_am_worker' message with final config: {final_worker_config}")
-                    await websocket.send(json.dumps({"type": "i_am_worker", "worker_config": final_worker_config}))
-                    
+                    secret_ = os.environ.get("WORKER_SECRET", "")
+
+                    if not secret_:
+                        print("Error: WORKER_SECRET environment variable is not set.")
+                        return
+
+                    await websocket.send(json.dumps({"type": "i_am_worker", "worker_config": final_worker_config, "secret": secret_}))
+
                     async for message in websocket:
                         print(f"[Main] Received task from server: {message}")
                         task_data = json.loads(message)

@@ -4,9 +4,14 @@
   "type": "module",
   "private": true,
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@lancedb/lancedb": "^0.22.1",
+    "apache-arrow": "^21.0.0"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "jose": "^6.1.0"
   }
 }
