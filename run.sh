@@ -7,8 +7,8 @@ tmux kill-session -t $SESSION 2>/dev/null
 tmux new-session -d -s $SESSION -n image_description
 tmux send-keys -t $SESSION:image_description "cd indexer && uv run --env-file .env python -m worker_image_description" C-m
 
-tmux new-window -t $SESSION -n worker_summarize
-tmux send-keys -t $SESSION:worker_summarize "cd indexer && uv run --env-file .env python -m worker_summarize" C-m
+# tmux new-window -t $SESSION -n worker_summarize
+# tmux send-keys -t $SESSION:worker_summarize "cd indexer && uv run --env-file .env python -m worker_summarize" C-m
 
 # This one is for general indexing tasks
 tmux new-window -t $SESSION -n worker_embedding

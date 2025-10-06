@@ -32,7 +32,11 @@ async def client_handler(heavy_ai_workload, worker_config):
     """
     Connects to the server with a robust, exponential backoff retry mechanism.
     """
-    uri = os.environ.get("BACKEND_WS_URL", "ws://localhost:8040")
+    uri = os.environ.get("BACKEND_WS_URL")
+    print(f"Connecting to server at {uri}...")
+    if uri is None:
+        print("Error: BACKEND_WS_URL environment variable is not set.")
+        return
     
     # --- Retry Logic Variables ---
     initial_delay = 1.0

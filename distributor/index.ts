@@ -5,6 +5,7 @@ import { createMessage, parseMessage } from "./message";
 import * as jose from 'jose'
 import handleAsWorker from "./handlers/worker";
 import { handleAsTenant } from "./handlers/tenant";
+import handleTenantREST from "./handlers/tenant_rest";
 
 export type Client = {
     id: string;
@@ -21,7 +22,15 @@ export type Client = {
     },
 
 }
+
 const clients = new Map<ServerWebSocket<unknown>, Client>();
+export function broadcastToTenants(message: Buffer | string) {
+    for (const client of clients.values()) {
+        if (!client.authenticated) continue;
+        client.ws.send(message);
+    }
+}
+
 const PORT = 8040;
 
 let job_map = new Map<string, { ws: ServerWebSocket<unknown> }>();
@@ -41,12 +50,22 @@ export function sendJobsToWorkers(c: Client) {
 // Gather jobs and distribute to workers
 Bun.serve({
     port: PORT,
-    fetch(req, server) {
-        // upgrade the request to a WebSocket
-        if (server.upgrade(req)) {
-            return; // do not return a Response
+    async fetch(req, server) {
+        const url = new URL(req.url);
+        console.log('HTTP request', req.method, req.url, url.pathname);
+
+        // Dedicated endpoint for WebSocket upgrades
+        if (url.pathname === "/ws") {
+            const upgraded = server.upgrade(req);
+            if (upgraded) {
+                // Bun automatically handles the response for successful upgrades
+                return;
+            }
+            return new Response("WebSocket upgrade failed", { status: 400 });
         }
-        return new Response("Upgrade failed", { status: 500 });
+
+
+        return handleTenantREST(req);
     },
     websocket: {
         open(ws) {
@@ -99,7 +118,7 @@ Bun.serve({
                 if (parsed.header.create_new) {
                     const tenant_id = crypto.randomUUID();
                     // Can do jti and blacklist later
-                    const token = new jose.SignJWT({ tenant_id })
+                    const token = await new jose.SignJWT({ tenant_id })
                         .setProtectedHeader({ alg: 'HS256' })
                         .sign(new TextEncoder().encode(process.env.JWT_SECRET));
                     client.authenticated = {
@@ -150,7 +169,8 @@ Bun.serve({
             }
 
             if (client.worker_config) {
-                await handleAsWorker(parsed, client, { clients, job_map });
+
+                await handleAsWorker(parsed, client, { job_map, broadcastToTenants });
                 return;
             }
 
@@ -168,4 +188,4 @@ Bun.serve({
     }, // handlers
 });
 
-console.log(`WebSocket server listening on ws://localhost:${PORT}`);
+console.log(`WebSocket server listening on localhost:${PORT}/ws`);
