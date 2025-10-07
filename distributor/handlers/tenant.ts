@@ -32,7 +32,6 @@ export async function onTenantConnection(parsed: any, client: Client, opts: {
         });
     }
 
-
     // if (parsed.header.type === "summarize") {
     //     if (!parsed.header.id || !parsed.header.passages || !Array.isArray(parsed.header.passages) || !parsed.header.query) return;
 

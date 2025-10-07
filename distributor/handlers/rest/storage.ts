@@ -8,7 +8,7 @@ export default async function handleStorageRequest(req: Request, payload: TokenP
     const url = new URL(req.url);
     const mediaUnitId = url.searchParams.get("id");
     if (!mediaUnitId) {
-        return Promise.resolve(new Response("Bad Request: Missing media unit id", { status: 400 }));
+        return new Response("Bad Request: Missing media unit id", { status: 400 })
     }
 
     const mediaUnit = await getMediaUnitById(mediaUnitId, payload.tenant_id);

@@ -18,8 +18,12 @@ tmux send-keys -t $SESSION:worker_embedding "cd indexer && uv run --env-file .en
 tmux new-window -t $SESSION -n worker_fast_embedding
 tmux send-keys -t $SESSION:worker_fast_embedding "cd indexer && SUBSCRIBED_EVENTS=\"fast_embedding\" MAX_LATENCY_MS=\"200\" RESULT_TYPE=\"fast_embedding_result\" uv run --env-file .env python -m worker_embedding" C-m
 
+# This one is for fast, reactive text suggestion
+tmux new-window -t $SESSION -n worker_text_generation
+tmux send-keys -t $SESSION:worker_text_generation "cd indexer && MAX_LATENCY_MS=\"200\" uv run --env-file .env python -m worker_text_generation" C-m
+
 tmux new-window -t $SESSION -n distributor
-tmux send-keys -t $SESSION:distributor "bun run distributor/index.ts" C-m
+tmux send-keys -t $SESSION:distributor "cd distributor && bun run index.ts" C-m
 
 
 # Attach when ready

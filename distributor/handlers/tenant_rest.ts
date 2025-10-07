@@ -1,4 +1,5 @@
 import verifyToken from "../auth";
+import handleAutocompleteRequest from "./rest/autocomplete";
 import { handleMediaUnitRequest } from "./rest/media_unit";
 import handleSearchRequest from "./rest/search";
 import handleStorageRequest from "./rest/storage";
@@ -34,6 +35,11 @@ export default async function handleTenantREST(req: Request): Promise<Response> 
 
     if (req.method === "GET" && url.pathname === "/api/v1/storage") {
         return await handleStorageRequest(req, verification.payload);
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/v1/autocomplete") {
+        return await handleAutocompleteRequest(req);
+
     }
 
     return new Response("Not Found", { status: 404 });

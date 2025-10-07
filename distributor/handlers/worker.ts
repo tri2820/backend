@@ -7,33 +7,26 @@ export default async function onWorkerConnection(parsed: any, client: Client, op
 }) {
 
 
-    // TODO: Make this REST API later
-    // if (parsed.header.type === "summarize_result") {
-    //     const outputs = parsed.header.output;
-    //     if (!outputs || !Array.isArray(outputs)) return;
+    if (parsed.header.type === "text_generation_result") {
+        const outputs = parsed.header.output as { id: string, generated_texts: string[] }[];
+        // Sanity check
+        if (!outputs || !Array.isArray(outputs)) return;
+        for (const output of outputs) {
+            const job = opts.job_map.get(output.id);
+            if (!job) {
+                console.error(`No job found for output id: ${output.id}`);
+                continue;
+            }
+            const result = {
+                type: 'text_generation_result',
+                id: output.id,
+                // One input, multiple outputs
+                generated_texts: output.generated_texts,
+            }
 
-    //     for (const output of outputs) {
-    //         const job = opts.job_map.get(output.id);
-    //         if (!job) {
-    //             console.error(`No job found for output id: ${output.id}`);
-    //             continue;
-    //         }
-    //         const client = opts.clients.get(job.ws);
-    //         if (!client) {
-    //             console.error(`No client found for job id: ${output.id}`);
-    //             continue;
-    //         }
-
-    //         // Send result back to the original client
-    //         const responseMessage = createMessage({
-    //             type: 'summarize_result',
-    //             id: output.id,
-    //             answer: output.answer
-    //         });
-    //         client.ws.send(responseMessage);
-    //         console.log(`Sent summary to client ${client.id} for job ${output.id}`);
-    //     }
-    // }
+            job.cont(result);
+        }
+    }
 
     if (parsed.header.type === "fast_embedding_result") {
         const outputs = parsed.header.output as { id: string, embedding: number[] }[];
