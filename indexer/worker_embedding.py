@@ -146,7 +146,6 @@ def load_ai_model():
                 })
         
         result_type = os.environ.get("RESULT_TYPE", "embedding_result")
-      
         result = {
             "type": result_type,
             "output": result_embeddings

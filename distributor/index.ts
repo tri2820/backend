@@ -1,11 +1,11 @@
 import type { ServerWebSocket } from "bun";
 // I have restored your original import. My apologies for changing it.
-import { addMediaUnit, FILES_DIR, updateMediaUnitBatch } from "./conn";
-import { createMessage, parseMessage } from "./message";
-import * as jose from 'jose'
-import handleAsWorker from "./handlers/worker";
-import { handleAsTenant } from "./handlers/tenant";
+import * as jose from 'jose';
+import verifyToken from "./auth";
+import { onTenantConnection } from "./handlers/tenant";
 import handleTenantREST from "./handlers/tenant_rest";
+import onWorkerConnection from "./handlers/worker";
+import { createMessage, parseMessage } from "./message";
 
 export type Client = {
     id: string;
@@ -20,22 +20,40 @@ export type Client = {
         gathered: any[];
         send_timeout?: NodeJS.Timeout;
     },
-
 }
 
+export type JobMap = Map<string, { cont: (result: any) => void }>;
+const job_map = new Map() as JobMap;
 const clients = new Map<ServerWebSocket<unknown>, Client>();
-export function broadcastToTenants(message: Buffer | string) {
-    for (const client of clients.values()) {
-        if (!client.authenticated) continue;
-        client.ws.send(message);
-    }
-}
+
 
 const PORT = 8040;
 
-let job_map = new Map<string, { ws: ServerWebSocket<unknown> }>();
 
-export function sendJobsToWorkers(c: Client) {
+export function sendJob<T extends { id: string }>(job: T, event: string, opts: {
+    cont: (result: any) => void;
+}) {
+    // Send back description when completed
+    job_map.set(job.id, {
+        cont: opts.cont
+    });
+
+    // Find the right workers and send jobs
+    for (const c of clients.values()) {
+        if (!c.worker_config || !c.worker_config.subscribed_events.includes(event)) continue;
+        c.worker_config.gathered.push(job);
+        if (c.worker_config.send_timeout) clearTimeout(c.worker_config.send_timeout);
+        if (c.worker_config.gathered.length < (c.worker_config.max_batch_size)) {
+            c.worker_config.send_timeout = setTimeout(async () => {
+                workerFlush(c);
+            }, c.worker_config.max_latency_ms);
+        } else {
+            workerFlush(c);
+        }
+    }
+}
+
+export function workerFlush(c: Client) {
     // This function might be called from timeout, so check everything
     if (!c.ws || c.ws.readyState !== WebSocket.OPEN) return;
     if (!c.worker_config) return;
@@ -53,9 +71,9 @@ Bun.serve({
     async fetch(req, server) {
         const url = new URL(req.url);
         console.log('HTTP request', req.method, req.url, url.pathname);
-
         // Dedicated endpoint for WebSocket upgrades
         if (url.pathname === "/ws") {
+            console.log('Upgrading to WebSocket');
             const upgraded = server.upgrade(req);
             if (upgraded) {
                 // Bun automatically handles the response for successful upgrades
@@ -63,7 +81,6 @@ Bun.serve({
             }
             return new Response("WebSocket upgrade failed", { status: 400 });
         }
-
 
         return handleTenantREST(req);
     },
@@ -136,16 +153,8 @@ Bun.serve({
 
                 if (parsed.header.auth_token) {
                     // Verify JWT token
-                    try {
-                        const secret = new TextEncoder().encode(process.env.JWT_SECRET);
-                        const { payload } = await jose.jwtVerify(parsed.header.auth_token, secret, {
-                            algorithms: ['HS256'],
-                        });
-
-                        if (!payload.tenant_id || typeof payload.tenant_id !== 'string') {
-                            throw new Error("Invalid token: missing tenant_id");
-                        }
-
+                    const { valid, payload } = await verifyToken(parsed.header.auth_token);
+                    if (valid && payload) {
                         client.authenticated = {
                             tenant_id: payload.tenant_id,
                         };
@@ -156,8 +165,7 @@ Bun.serve({
                             // No need to send token back
                         });
                         ws.send(responseMessage);
-                    } catch (e) {
-                        console.error("Failed to verify token:", e);
+                    } else {
                         ws.close(1008, "Invalid token");
                     }
                     return;
@@ -169,13 +177,12 @@ Bun.serve({
             }
 
             if (client.worker_config) {
-
-                await handleAsWorker(parsed, client, { job_map, broadcastToTenants });
+                await onWorkerConnection(parsed, client, { job_map });
                 return;
             }
 
             if (client.authenticated) {
-                await handleAsTenant(parsed, client, { clients, job_map });
+                await onTenantConnection(parsed, client, { job_map });
                 return;
             }
 

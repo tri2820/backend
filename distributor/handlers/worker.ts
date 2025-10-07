@@ -1,13 +1,11 @@
-import type { ServerWebSocket } from "bun";
-import { broadcastToTenants, type Client } from "..";
-import { createMessage } from "../message";
+import { type Client, type JobMap } from "..";
 import { updateMediaUnitBatch } from "../conn";
+import { createMessage } from "../message";
 
-export default async function handleAsWorker(parsed: any, client: Client, opts: {
-    broadcastToTenants: (message: Buffer | string) => void;
-    job_map: Map<string, { ws: ServerWebSocket<unknown> }>;
+export default async function onWorkerConnection(parsed: any, client: Client, opts: {
+    job_map: JobMap;
 }) {
-    if (!client.worker_config) return;
+
 
     // TODO: Make this REST API later
     // if (parsed.header.type === "summarize_result") {
@@ -37,12 +35,33 @@ export default async function handleAsWorker(parsed: any, client: Client, opts: 
     //     }
     // }
 
-    if (parsed.header.type === "embedding_result") {
-        const embeddings = parsed.header.output as { id: string, embedding: number[] }[];
+    if (parsed.header.type === "fast_embedding_result") {
+        const outputs = parsed.header.output as { id: string, embedding: number[] }[];
         // Sanity check
-        if (!embeddings || !Array.isArray(embeddings)) return;
-        await updateMediaUnitBatch(embeddings.map((e) => ({ id: e.id, embedding: e.embedding })));
-        console.log('Updated embeddings', embeddings.length);
+        if (!outputs || !Array.isArray(outputs)) return;
+        for (const output of outputs) {
+            const job = opts.job_map.get(output.id);
+            if (!job) {
+                console.error(`No job found for output id: ${output.id}`);
+                continue;
+            }
+            const result = {
+                type: 'fast_embedding_result',
+                id: output.id,
+                embedding: output.embedding
+            }
+
+            job.cont(result);
+        }
+    }
+
+
+    if (parsed.header.type === "embedding_result") {
+        const outputs = parsed.header.output as { id: string, embedding: number[] }[];
+        // Sanity check
+        if (!outputs || !Array.isArray(outputs)) return;
+        await updateMediaUnitBatch(outputs.map((o) => ({ id: o.id, embedding: o.embedding })));
+        console.log('Updated embeddings', outputs.length);
     }
 
     if (parsed.header.type === "image_description_result") {
@@ -51,11 +70,20 @@ export default async function handleAsWorker(parsed: any, client: Client, opts: 
         if (!outputs || !Array.isArray(outputs)) return;
         await updateMediaUnitBatch(outputs.map(o => ({ id: o.id, description: o.description })));
         console.log('Updated descriptions', outputs.length);
-        const message = createMessage({
-            type: 'image_description_result',
-            output: outputs,
-        });
 
-        opts.broadcastToTenants(message);
+        for (const output of outputs) {
+            const job = opts.job_map.get(output.id);
+            if (!job) {
+                console.error(`No job found for output id: ${output.id}`);
+                continue;
+            }
+            const result = {
+                type: 'image_description_result',
+                id: output.id,
+                description: output.description
+            }
+
+            job.cont(result);
+        }
     }
 }

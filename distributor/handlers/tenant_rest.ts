@@ -1,8 +1,18 @@
+import verifyToken from "../auth";
+import { handleMediaUnitRequest } from "./rest/media_unit";
+import handleSearchRequest from "./rest/search";
+
 export default async function handleTenantREST(req: Request): Promise<Response> {
     // Handle REST API endpoints
     const url = new URL(req.url);
     const auth = req.headers.get("authorization");
-    console.log('auth', auth);
+    const token = auth?.split(" ")[1];
+
+    if (!token) return new Response("Unauthorized", { status: 401 });
+    const verification = await verifyToken(token);
+    if (!verification.valid || !verification.payload) {
+        return new Response("Unauthorized", { status: 401 });
+    }
 
     // Simple health check endpoint
     if (req.method === "GET" && url.pathname === "/api/v1/health") {
@@ -12,5 +22,14 @@ export default async function handleTenantREST(req: Request): Promise<Response> 
         });
     }
 
+
+    if (req.method === "GET" && url.pathname === "/api/v1/media-unit") {
+        const resp = await handleMediaUnitRequest(req, verification.payload)
+        return resp;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/v1/search") {
+        return await handleSearchRequest(req);
+    }
     return new Response("Not Found", { status: 404 });
 }

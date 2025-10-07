@@ -38,28 +38,36 @@ export const table_media_units = await connection.openTable('media_units');
 let media_unit_rows: MediaUnit[] = []
 let add_media_unit_timeout: NodeJS.Timeout | null = null;
 export function addMediaUnit(mediaUnit: MediaUnit) {
-    media_unit_rows.push({
-        ...mediaUnit,
-        at_time: new Date(mediaUnit.at_time),
-        description: mediaUnit.description ?? null,
-        embedding: mediaUnit.embedding ? mediaUnit.embedding : null,
-    });
+    try {
+        media_unit_rows.push({
+            ...mediaUnit,
+            at_time: new Date(mediaUnit.at_time),
+            description: mediaUnit.description ?? null,
+            embedding: mediaUnit.embedding ? mediaUnit.embedding : null,
+        });
 
-    if (add_media_unit_timeout) clearTimeout(add_media_unit_timeout);
+        if (add_media_unit_timeout) clearTimeout(add_media_unit_timeout);
 
-    // If we have more than 100 rows, add immediately
-    if (media_unit_rows.length > 100) {
-        const toAdd = media_unit_rows;
-        media_unit_rows = [];
-        table_media_units.add(toAdd);
-        return;
+        // If we have more than 100 rows, add immediately
+        if (media_unit_rows.length > 100) {
+            const toAdd = media_unit_rows;
+            media_unit_rows = [];
+            table_media_units.add(toAdd);
+            return;
+        }
+
+        add_media_unit_timeout = setTimeout(async () => {
+            try {
+                const toAdd = media_unit_rows;
+                media_unit_rows = [];
+                await table_media_units.add(toAdd);
+            } catch (e) {
+                console.error('Error adding media unit batch in timeout', e);
+            }
+        }, 3000);
+    } catch (e) {
+        console.error('Error adding media unit outer', e);
     }
-
-    add_media_unit_timeout = setTimeout(async () => {
-        const toAdd = media_unit_rows;
-        media_unit_rows = [];
-        await table_media_units.add(toAdd);
-    }, 1000);
 }
 
 
@@ -97,21 +105,25 @@ export async function updateMediaUnit(mediaUnit: Partial<MediaUnit> & { id: stri
 }
 
 export async function updateMediaUnitBatch(mediaUnits: (Partial<MediaUnit> & { id: string })[]): Promise<void> {
-    // Temporary fix before NPM package is updated
-    const updates = mediaUnits.map(mu => partialMediaUnitToUpdate(mu, { embedding: null }));
-    await table_media_units.mergeInsert("id")
-        .whenMatchedUpdateAll()
-        // ignore unmatched (not inserted)
-        .execute(updates);
+    try {
+        // Temporary fix before NPM package is updated
+        const updates = mediaUnits.map(mu => partialMediaUnitToUpdate(mu, { embedding: null }));
+        await table_media_units.mergeInsert("id")
+            .whenMatchedUpdateAll()
+            // ignore unmatched (not inserted)
+            .execute(updates);
+    } catch (error) {
+        console.error("Error updating media unit batch:", error);
+    }
 }
 
 
 /**
  * Searches for media units by embedding similarity.
  */
-export async function searchMediaUnitsByEmbedding(queryEmbedding: number[]): Promise<MediaUnit[] | null> {
+export async function searchMediaUnitsByEmbedding(queryEmbedding: number[]): Promise<(MediaUnit & { _distance: number })[] | null> {
     try {
-        const results = table_media_units.search(queryEmbedding).limit(50);
+        const results = table_media_units.search(queryEmbedding).where('description IS NOT NULL').limit(50);
         const resultArray = await results.toArray();
         return resultArray;
     } catch (error) {
@@ -120,37 +132,43 @@ export async function searchMediaUnitsByEmbedding(queryEmbedding: number[]): Pro
     }
 }
 
+// Note: this function does not guarantee order of results (sort after query)
+// to guarantee order, need sort before query (lanceDB currently does not support order by in search)
+// There is a ticket to add this feature on GitHub
 /**
- * Retrieves media units with pagination.
+ * Retrieves media units with pagination and filtering by tenant_id.
  */
 export async function getMediaUnitsPaginated(
+    tenant_id: string,
     page: number = 1,
     limit: number = 10
-): Promise<{ items: MediaUnit[], total: number } | null> {
+): Promise<{ items: Partial<MediaUnit>[], total: number } | null> {
     try {
+        const where = `tenant_id = '${tenant_id}'`;
 
-        // Get total count
-        const total = await table_media_units.countRows();
+        // Get total count for the given tenant_id
+        const total = await table_media_units.countRows(where);
 
         // Calculate offset based on page and limit
         const offset = (page - 1) * limit;
 
-        // Query with limit and skip for pagination
-        const allResults = await table_media_units
-            .toArrow()
-            .then(arrowTable => {
-                // Convert to JS array and sort by at_time in descending order 
-                const rows = arrowTable.toArray().sort((a, b) =>
-                    new Date(b.at_time).getTime() - new Date(a.at_time).getTime()
-                );
+        // Query with where clause, limit, and offset for pagination
+        const query = table_media_units.query()
+            .where(where)
+            .limit(limit)
+            .offset(offset);
 
-                // Apply pagination by slicing the sorted array
-                const paginatedRows = rows.slice(offset, offset + limit);
-                return paginatedRows;
-            });
+        const results = await query.toArray()
+
+        // Sort the results by at_time in descending order
+        const sortedResults = results.sort((a, b) =>
+            new Date(b.at_time).getTime() - new Date(a.at_time).getTime()
+        );
+
+        const items = sortedResults.map(item => ({ description: item.description, id: item.id, media_id: item.media_id, at_time: item.at_time }));
 
         return {
-            items: allResults,
+            items,
             total
         };
     } catch (error) {
