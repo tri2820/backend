@@ -26,7 +26,6 @@ BATCH INPUT FORMAT (Simplified):
 
 BATCH OUTPUT FORMAT (A single response parsed into 5 items):
 {
-  "type": "text_generation_result",
   "output": [
     {
       "id": "req_001",
@@ -176,8 +175,7 @@ def load_ai_model():
                 "generated_texts": generated_texts
             })
 
-        result_type = os.environ.get("RESULT_TYPE", "text_generation_result")
-        final_result = { "type": result_type, "output": results }
+        final_result = {  "output": results }
         
         print("[Text Generation Thread] Batch text generation workload finished.")
         return json.dumps(final_result)
@@ -186,4 +184,4 @@ def load_ai_model():
 
 if __name__ == "__main__":
     worker_function = load_ai_model()
-    asyncio.run(client_handler(worker_function, {"subscribed_events": ["text_generation"], "max_latency_ms": 300, "max_batch_size": 8}))
+    asyncio.run(client_handler(worker_function))

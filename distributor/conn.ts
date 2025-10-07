@@ -35,36 +35,46 @@ export const table_media_units = await connection.openTable('media_units');
 
 
 
-let media_unit_rows: MediaUnit[] = []
-let add_media_unit_timeout: NodeJS.Timeout | null = null;
+// let add_media_unit_rows: MediaUnit[] = []
+// let add_media_unit_timeout: NodeJS.Timeout | null = null;
 export function addMediaUnit(mediaUnit: MediaUnit) {
     try {
-        media_unit_rows.push({
+        // FIX BUG: Eagerly add to avoid update when not added
+        const addable = {
             ...mediaUnit,
             at_time: new Date(mediaUnit.at_time),
             description: mediaUnit.description ?? null,
             embedding: mediaUnit.embedding ? mediaUnit.embedding : null,
-        });
-
-        if (add_media_unit_timeout) clearTimeout(add_media_unit_timeout);
-
-        // If we have more than 100 rows, add immediately
-        if (media_unit_rows.length > 100) {
-            const toAdd = media_unit_rows;
-            media_unit_rows = [];
-            table_media_units.add(toAdd);
-            return;
         }
+        table_media_units.add([addable]);
+        // add_media_unit_rows.push({
+        //     ...mediaUnit,
+        //     at_time: new Date(mediaUnit.at_time),
+        //     description: mediaUnit.description ?? null,
+        //     embedding: mediaUnit.embedding ? mediaUnit.embedding : null,
+        // });
 
-        add_media_unit_timeout = setTimeout(async () => {
-            try {
-                const toAdd = media_unit_rows;
-                media_unit_rows = [];
-                await table_media_units.add(toAdd);
-            } catch (e) {
-                console.error('Error adding media unit batch in timeout', e);
-            }
-        }, 3000);
+        // if (add_media_unit_timeout) clearTimeout(add_media_unit_timeout);
+
+        // // If we have more than 100 rows, add immediately
+        // if (add_media_unit_rows.length > 100) {
+        //     const toAdd = add_media_unit_rows;
+        //     add_media_unit_rows = [];
+        //     console.log(`Adding media unit batch of ${toAdd.length}`);
+        //     table_media_units.add(toAdd);
+        //     return;
+        // }
+
+        // add_media_unit_timeout = setTimeout(async () => {
+        //     try {
+        //         const toAdd = add_media_unit_rows;
+        //         add_media_unit_rows = [];
+        //         console.log(`Adding media unit batch of ${toAdd.length}`);
+        //         await table_media_units.add(toAdd);
+        //     } catch (e) {
+        //         console.error('Error adding media unit batch in timeout', e);
+        //     }
+        // }, 3000);
     } catch (e) {
         console.error('Error adding media unit outer', e);
     }
@@ -72,7 +82,6 @@ export function addMediaUnit(mediaUnit: MediaUnit) {
 
 
 export function partialMediaUnitToUpdate(mediaUnit: Partial<MediaUnit> & { id: string }, coalesce?: Record<string, any>) {
-
     const update: Record<string, any> = {};
     for (const key in mediaUnit) {
         if (mediaUnit[key as keyof Partial<MediaUnit>] !== undefined) {
@@ -89,18 +98,35 @@ export function partialMediaUnitToUpdate(mediaUnit: Partial<MediaUnit> & { id: s
     return update;
 }
 
-/**
- * Updates a media unit record in the database using the native update method.
- */
+
+let update_media_unit_timeout: NodeJS.Timeout | null = null;
+let update_media_unit_rows: (Partial<MediaUnit> & { id: string })[] = [];
 export async function updateMediaUnit(mediaUnit: Partial<MediaUnit> & { id: string }): Promise<void> {
+    // console.log('Updating media unit', mediaUnit, update_media_unit_rows.length);
     try {
-        const update = partialMediaUnitToUpdate(mediaUnit);
-        await table_media_units.update({
-            where: `id = '${mediaUnit.id}'`,
-            values: update
-        });
-    } catch (error) {
-        console.error("Error updating media unit:", error);
+        update_media_unit_rows.push(mediaUnit);
+
+        if (update_media_unit_timeout) clearTimeout(update_media_unit_timeout);
+        if (update_media_unit_rows.length > 100) {
+            const toUpdate = update_media_unit_rows;
+            update_media_unit_rows = [];
+            console.log(`Updating media unit batch of ${toUpdate.length}`);
+            await updateMediaUnitBatch(toUpdate);
+            return;
+        }
+        update_media_unit_timeout = setTimeout(async () => {
+            try {
+                const toUpdate = update_media_unit_rows;
+                update_media_unit_rows = [];
+                console.log(`Updating media unit batch of ${toUpdate.length}`);
+                await updateMediaUnitBatch(toUpdate);
+            } catch (e) {
+                console.error('Error updating media unit batch in timeout', e);
+            }
+        }, 3000);
+    }
+    catch (e) {
+        console.error('Error updating media unit outer', e);
     }
 }
 
@@ -108,10 +134,24 @@ export async function updateMediaUnitBatch(mediaUnits: (Partial<MediaUnit> & { i
     try {
         // Temporary fix before NPM package is updated
         const updates = mediaUnits.map(mu => partialMediaUnitToUpdate(mu, { embedding: null }));
-        await table_media_units.mergeInsert("id")
+        // Merge updates by id
+        const mergedUpdates: Record<string, Partial<MediaUnit>> = {};
+        for (const update of updates) {
+            const id = update.id;
+            if (!mergedUpdates[id]) mergedUpdates[id] = {};
+            Object.assign(mergedUpdates[id], update);
+        }
+
+        console.log(`Merging ${Object.keys(mergedUpdates).length} media unit updates`);
+        console.log(Object.values(mergedUpdates));
+        const rowUpdates = Object.values(mergedUpdates);
+
+        const result = await table_media_units.mergeInsert("id")
             .whenMatchedUpdateAll()
             // ignore unmatched (not inserted)
-            .execute(updates);
+            .execute(rowUpdates);
+
+        console.log('result', result)
     } catch (error) {
         console.error("Error updating media unit batch:", error);
     }

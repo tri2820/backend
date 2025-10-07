@@ -1,30 +1,37 @@
 #!/usr/bin/env bash
 SESSION="backend"
 
-# Kill old session if it exists
+# Kill any old session if it exists
 tmux kill-session -t $SESSION 2>/dev/null
 
-tmux new-session -d -s $SESSION -n image_description
-tmux send-keys -t $SESSION:image_description "cd indexer && uv run --env-file .env python -m worker_image_description" C-m
-
-# tmux new-window -t $SESSION -n worker_summarize
-# tmux send-keys -t $SESSION:worker_summarize "cd indexer && uv run --env-file .env python -m worker_summarize" C-m
-
-# This one is for general indexing tasks
-tmux new-window -t $SESSION -n worker_embedding
-tmux send-keys -t $SESSION:worker_embedding "cd indexer && uv run --env-file .env python -m worker_embedding" C-m
-
-# This one is for fast, reactive search tasks
-tmux new-window -t $SESSION -n worker_fast_embedding
-tmux send-keys -t $SESSION:worker_fast_embedding "cd indexer && SUBSCRIBED_EVENTS=\"fast_embedding\" MAX_LATENCY_MS=\"200\" RESULT_TYPE=\"fast_embedding_result\" uv run --env-file .env python -m worker_embedding" C-m
-
-# This one is for fast, reactive text suggestion
-tmux new-window -t $SESSION -n worker_text_generation
-tmux send-keys -t $SESSION:worker_text_generation "cd indexer && MAX_LATENCY_MS=\"200\" uv run --env-file .env python -m worker_text_generation" C-m
-
-tmux new-window -t $SESSION -n distributor
+# 1. CREATE the new detached session, naming the FIRST window "distributor"
+tmux new-session -d -s $SESSION -n distributor
 tmux send-keys -t $SESSION:distributor "cd distributor && bun run index.ts" C-m
 
+# 2. ADD all other windows to the session that now exists
 
-# Attach when ready
+# # This one is for general indexing tasks with Jina embeddings
+# tmux new-window -t $SESSION -n worker_embedding
+# tmux send-keys -t $SESSION:worker_embedding "cd indexer && WORKER_TYPE=\"embedding\" MAX_LATENCY_MS=\"10000\" uv run --env-file .env python -m worker_embedding" C-m
+
+# This one is for fast, reactive search tasks with Jina embeddings
+tmux new-window -t $SESSION -n worker_fast_embedding
+tmux send-keys -t $SESSION:worker_fast_embedding "cd indexer && WORKER_TYPE=\"fast_embedding\" MAX_LATENCY_MS=\"200\" uv run --env-file .env python -m worker_embedding" C-m
+
+# This one is for fast, reactive text suggestion with Phi 4
+tmux new-window -t $SESSION -n worker_text_generation
+tmux send-keys -t $SESSION:worker_text_generation "cd indexer && WORKER_TYPE=\"text_generation\" MAX_LATENCY_MS=\"200\" uv run --env-file .env python -m worker_text_generation" C-m
+
+# This one is for fast Q & A / summary with VLM
+tmux new-window -t $SESSION -n worker_fast_vlm
+tmux send-keys -t $SESSION:worker_fast_vlm "cd indexer && WORKER_TYPE=\"fast_vlm\" MAX_LATENCY_MS=\"200\" uv run --env-file .env python -m worker_vlm" C-m
+
+# This one is for general indexing tasks
+tmux new-window -t $SESSION -n worker_vlm
+tmux send-keys -t $SESSION:worker_vlm "cd indexer && WORKER_TYPE=\"vlm\" MAX_LATENCY_MS=\"10000\" uv run --env-file .env python -m worker_vlm" C-m
+
+# 3. SELECT the distributor window to make it the active one
+tmux select-window -t $SESSION:distributor
+
+# 4. Attach to the session, which will now open on the selected window
 tmux attach -t $SESSION

@@ -8,19 +8,17 @@ export default async function handleAutocompleteRequest(req: Request): Promise<R
     }
 
     const job = {
-        id: crypto.randomUUID(),
         prompt: json.text,
     }
 
-    console.log('Sending job to worker', job);
-    const text_generation_result = await new Promise<{ type: 'text_generation_result', id: string, generated_texts: string[] }>((resolve) => {
+    const text_generation_output = await new Promise((resolve) => {
         sendJob(job, "text_generation", {
-            cont(text_generation_result) {
-                resolve(text_generation_result);
+            cont(text_generation_output) {
+                resolve(text_generation_output);
             }
         });
     })
 
-    const items = text_generation_result?.generated_texts.map(t => ({ text: t })) || [];
+    const items = (text_generation_output as any).generated_texts.map((t: string) => ({ text: t })) || [];
     return new Response(JSON.stringify({ items }), { headers: { "Content-Type": "application/json" } });
 }

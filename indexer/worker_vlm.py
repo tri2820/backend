@@ -1,3 +1,37 @@
+"""
+BATCH INPUT/OUTPUT SHAPE FOR worker_text_generation:
+
+BATCH INPUT FORMAT (Accepts multiple file paths AND multiple text prompts per input):
+{
+  "inputs": [
+    {
+      "id": "req_001",
+      "filepaths": ["/path/to/person.jpg", "/path/to/package.png"],
+      "texts": ["What is the person doing with the package?", "Are they in a restricted area?"]
+    },
+    {
+      "id": "req_002",
+      "filepaths": ["/path/to/car.jpg", "/path/to/entrance.jpg"],
+      "texts": ["Describe the vehicle.", "Is the entrance blocked?"]
+    }
+  ]
+}
+
+BATCH OUTPUT FORMAT (A single description is generated in response to all images/texts for an ID):
+{
+  "output": [
+    {
+      "id": "req_001",
+      "description": "The model's answer based on the person/package images and the two questions."
+    },
+    {
+      "id": "req_002",
+      "description": "The model's answer based on the car/entrance images and the two questions."
+    }
+  ]
+}
+"""
+
 import asyncio
 from ws_client_handler import client_handler
 import time
@@ -33,11 +67,27 @@ def load_ai_model():
         """Simulates a long-running, CPU/GPU-intensive task on the client machine."""
         print(f"[AI Thread] Starting heavy AI workload with data: {data}")
 
-         # Prepare optimized batch of messages and collect image names
+        # Prepare optimized batch of messages and collect image names
         messages = []
         message_inputs = data.get('inputs', [])
         for inp in  message_inputs:
-            filepath = inp['filepath']
+            # --- MODIFICATION START ---
+            # Initialize an empty list for user content
+            user_content = []
+            
+            if inp.get('filepaths'):
+              # Add all image paths from the input
+              # inp['filepaths'] is expected to be a list of paths
+              for filepath in inp['filepaths']:
+                  user_content.append({"type": "image", "image": str(filepath)})
+
+            if inp.get('texts'):
+              # Add all text prompts from the input
+              # inp['texts'] is expected to be a list of strings
+              for text_prompt in inp['texts']:
+                  user_content.append({"type": "text", "text": text_prompt})
+            # --- MODIFICATION END ---
+            
             message = [
                 {
                     "role": "system",
@@ -45,10 +95,7 @@ def load_ai_model():
                 },
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "image", "image": str(filepath)},
-                        {"type": "text", "text": "Describe this image in detail."} 
-                    ]
+                    "content": user_content # Use the dynamically built content list
                 }
             ]
             messages.append(message)
@@ -81,7 +128,7 @@ def load_ai_model():
             })
             i += 1
 
-        result = {"output": outputs}
+        result = { "output": outputs }
         print("[AI Thread] Heavy AI workload finished.")
         return json.dumps(result)
 

@@ -34,7 +34,6 @@ INPUT FORMAT:
 
 OUTPUT FORMAT:
 {
-  "type": "embedding_result",
   "output": [                                   # Simple array of embeddings
     {
       "id": "text_1",
@@ -144,10 +143,7 @@ def load_ai_model():
                     # FIX: Convert the individual Tensor to a list
                     "embedding": embeddings[i].tolist()
                 })
-        
-        result_type = os.environ.get("RESULT_TYPE", "embedding_result")
         result = {
-            "type": result_type,
             "output": result_embeddings
         }
         print("[Embedding Thread] Embedding workload finished.")
@@ -160,4 +156,4 @@ def load_ai_model():
 if __name__ == "__main__":
     worker_function = load_ai_model()
     # This assumes a 'client_handler' function is defined elsewhere to run the worker
-    asyncio.run(client_handler(worker_function, {"subscribed_events": ["index"]}))
+    asyncio.run(client_handler(worker_function))

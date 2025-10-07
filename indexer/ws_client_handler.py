@@ -12,14 +12,17 @@ def parse_env():
     Returns a dictionary containing only the settings found in the environment.
     """
     env_config = {}
-
-    # Read and parse SUBSCRIBED_EVENTS if it exists
-    subscribed_events_str = os.environ.get("SUBSCRIBED_EVENTS")
-    if subscribed_events_str:
-        env_config["subscribed_events"] = [event.strip() for event in subscribed_events_str.split(",")]
-
-    # Read and parse MAX_LATENCY_MS if it exists
     max_latency_ms_str = os.environ.get("MAX_LATENCY_MS")
+    worker_type_str = os.environ.get("WORKER_TYPE")
+    if not worker_type_str:
+        print("Error: WORKER_TYPE environment variable is not set.")
+        exit(1)
+    env_config["worker_type"] = worker_type_str
+
+    if not max_latency_ms_str:
+        print("Error: MAX_LATENCY_MS environment variable is not set.")
+        exit(1)
+
     if max_latency_ms_str:
         try:
             env_config["max_latency_ms"] = int(max_latency_ms_str)
@@ -28,7 +31,7 @@ def parse_env():
     
     return env_config
 
-async def client_handler(heavy_ai_workload, worker_config):
+async def client_handler(heavy_ai_workload):
     """
     Connects to the server with a robust, exponential backoff retry mechanism.
     """
@@ -52,25 +55,18 @@ async def client_handler(heavy_ai_workload, worker_config):
                     print(f"[Main] Connection successful to {uri}.")
                     reconnect_delay = initial_delay
                     
-                    # --- MERGED LOGIC HERE ---
-                    # 1. Start with a copy of the base config passed to the function.
-                    final_worker_config = worker_config.copy()
-                    
                     # 2. Parse environment variables to get any overrides.
-                    env_overrides = parse_env()
-                    
-                    # 3. Update the config, overwriting base values with env variables.
-                    final_worker_config.update(env_overrides)
+                    worker_config = parse_env()
                     
                     # 4. Send the final, merged configuration.
-                    print(f"[Main] Sending 'i_am_worker' message with final config: {final_worker_config}")
+                    print(f"[Main] Sending 'i_am_worker' message with config: {worker_config}")
                     secret_ = os.environ.get("WORKER_SECRET", "")
 
                     if not secret_:
                         print("Error: WORKER_SECRET environment variable is not set.")
                         return
 
-                    await websocket.send(json.dumps({"type": "i_am_worker", "worker_config": final_worker_config, "secret": secret_}))
+                    await websocket.send(json.dumps({"type": "i_am_worker", "worker_config": worker_config, "secret": secret_}))
 
                     async for message in websocket:
                         print(f"[Main] Received task from server: {message}")

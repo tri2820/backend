@@ -4,7 +4,6 @@ import * as jose from 'jose';
 import verifyToken from "./auth";
 import { onTenantConnection } from "./handlers/tenant";
 import handleTenantREST from "./handlers/tenant_rest";
-import onWorkerConnection from "./handlers/worker";
 import { createMessage, parseMessage } from "./message";
 
 export type Client = {
@@ -14,7 +13,7 @@ export type Client = {
     }
     ws: ServerWebSocket<unknown>;
     worker_config?: {
-        subscribed_events: string[];
+        worker_type: string;
         max_batch_size: number;
         max_latency_ms: number;
         gathered: any[];
@@ -22,35 +21,36 @@ export type Client = {
     },
 }
 
-export type JobMap = Map<string, { cont: (result: any) => void }>;
+export type JobMap = Map<string, { cont: (result: Record<string, any>) => void }>;
 const job_map = new Map() as JobMap;
 const clients = new Map<ServerWebSocket<unknown>, Client>();
 
-
 const PORT = 8040;
 
-
-export function sendJob<T extends { id: string }>(job: T, event: string, opts: {
-    cont: (result: any) => void;
+export function sendJob(job: Record<string, any>, worker_type: string, opts?: {
+    cont: (result: Record<string, any>) => void;
 }) {
-    // Send back description when completed
-    job_map.set(job.id, {
-        cont: opts.cont
-    });
-
-    // Find the right workers and send jobs
-    for (const c of clients.values()) {
-        if (!c.worker_config || !c.worker_config.subscribed_events.includes(event)) continue;
-        c.worker_config.gathered.push(job);
-        if (c.worker_config.send_timeout) clearTimeout(c.worker_config.send_timeout);
-        if (c.worker_config.gathered.length < (c.worker_config.max_batch_size)) {
-            c.worker_config.send_timeout = setTimeout(async () => {
-                workerFlush(c);
-            }, c.worker_config.max_latency_ms);
-        } else {
-            workerFlush(c);
-        }
+    job.id = crypto.randomUUID();
+    if (opts?.cont) {
+        job_map.set(job.id, {
+            cont: opts.cont
+        });
     }
+
+    // TODO: distribute work for all workers of that worker_type, not just the first one
+    const worker = clients.values().find(c => c.worker_config?.worker_type === worker_type);
+    if (!worker) return;
+    worker.worker_config!.gathered.push(job);
+    if (worker.worker_config!.send_timeout) clearTimeout(worker.worker_config!.send_timeout);
+
+    if (worker.worker_config!.gathered.length >= (worker.worker_config!.max_batch_size)) {
+        workerFlush(worker);
+        return;
+    }
+
+    worker.worker_config!.send_timeout = setTimeout(async () => {
+        workerFlush(worker);
+    }, worker.worker_config!.max_latency_ms);
 }
 
 export function workerFlush(c: Client) {
@@ -101,8 +101,8 @@ Bun.serve({
 
             // === Worker registration and job distribution ===
             if (parsed.header.type === "i_am_worker") {
-                if (!parsed.header.worker_config || !Array.isArray(parsed.header.worker_config.subscribed_events)) {
-                    console.error("Invalid worker_config from worker.");
+                if (!parsed.header.worker_config || !parsed.header.worker_config.worker_type) {
+                    console.error("Invalid worker_config from worker.", parsed);
                     return;
                 }
 
@@ -116,7 +116,7 @@ Bun.serve({
                 client.worker_config = {
                     max_batch_size: 32,
                     max_latency_ms: 30000,
-                    subscribed_events: [],
+                    worker_type: parsed.header.worker_config.worker_type,
                     gathered: [],
                 };
 
@@ -177,12 +177,19 @@ Bun.serve({
             }
 
             if (client.worker_config) {
-                await onWorkerConnection(parsed, client, { job_map });
+                // TODO: Here we assume all workers are BATCH workers
+                const outputs = parsed.header.output as any[];
+                // Sanity check
+                if (!outputs || !Array.isArray(outputs)) return;
+                for (const output of outputs) {
+                    const job = job_map.get(output.id);
+                    job?.cont(output);
+                }
                 return;
             }
 
             if (client.authenticated) {
-                await onTenantConnection(parsed, client, { job_map });
+                await onTenantConnection(parsed, client);
                 return;
             }
 
