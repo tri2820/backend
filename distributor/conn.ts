@@ -3,14 +3,14 @@ import * as lancedb from "@lancedb/lancedb";
 import { initializeDatabase } from "./database";
 import path from "path";
 
-
-export const APP_DIR = '/home/tri/birdview';
+export const APP_DIR = process.env.Z_APP_DIR ?? '/home/tri/zapdos_data';
 export const FILES_DIR = path.join(APP_DIR, 'files');
 export const DATABASE_PATH = path.join(APP_DIR, 'database');
 export const DATABASE_EMBEDDING_DIMENSION = 2048;
 
 // Make sure these directories exist
 import fs from 'fs/promises';
+import { maskedMediaUnit } from "./handlers/rest/utils";
 await fs.mkdir(APP_DIR, { recursive: true });
 await fs.mkdir(FILES_DIR, { recursive: true });
 await fs.mkdir(DATABASE_PATH, { recursive: true });
@@ -123,7 +123,7 @@ export async function updateMediaUnitBatch(mediaUnits: (Partial<MediaUnit> & { i
  */
 export async function searchMediaUnitsByEmbedding(queryEmbedding: number[]): Promise<(MediaUnit & { _distance: number })[] | null> {
     try {
-        const results = table_media_units.search(queryEmbedding).where('description IS NOT NULL').limit(50);
+        const results = table_media_units.search(queryEmbedding).where('description IS NOT NULL').limit(20);
         const resultArray = await results.toArray();
         return resultArray;
     } catch (error) {
@@ -175,4 +175,24 @@ export async function getMediaUnitsPaginated(
         console.error("Error retrieving paginated media units:", error);
         return null;
     }
+}
+
+export async function getMediaUnitById(id: string, tenant_id: string): Promise<MediaUnit | null> {
+    try {
+        const results = await table_media_units.query().where(`id = '${id}' AND tenant_id = '${tenant_id}'`).limit(1).toArray();
+        if (results.length === 0) return null;
+        return results[0];
+    } catch (error) {
+        console.error("Error retrieving media unit by id:", error);
+        return null;
+    }
+}
+
+
+
+// For testing
+// If run this file directly, try dumping the table
+if (require.main === module) {
+    const mediaUnits = await table_media_units.query().where('description IS NOT NULL').limit(10).toArray() as (MediaUnit)[];
+    console.log(JSON.stringify(mediaUnits.map(mu => ({ id: mu.id, description: mu.description, tenant_id: mu.tenant_id })), null, 2));
 }

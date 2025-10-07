@@ -1,5 +1,6 @@
 import { sendJob } from "../..";
 import { searchMediaUnitsByEmbedding } from "../../conn";
+import { maskedMediaUnit } from "./utils";
 
 export default async function handleSearchRequest(req: Request): Promise<Response> {
     const json = await req.json() as { query?: string };
@@ -27,7 +28,7 @@ export default async function handleSearchRequest(req: Request): Promise<Respons
     console.log('Search with', embd_result.embedding);
     const search_result = await searchMediaUnitsByEmbedding(embd_result.embedding);
     console.log('Search result', search_result);
-    const items = search_result?.map(mu => ({ id: mu.id, description: mu.description, at_time: mu.at_time, media_id: mu.media_id, _distance: mu._distance })) || [];
+    const items = search_result?.map(maskedMediaUnit) || [];
 
     // Placeholder response
     return new Response(JSON.stringify({ items }), { headers: { "Content-Type": "application/json" } });
