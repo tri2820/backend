@@ -1,28 +1,50 @@
 """
 BATCH INPUT/OUTPUT SHAPE FOR worker_text_generation:
 
-BATCH INPUT FORMAT (Accepts multiple file paths AND multiple text prompts per input):
+BATCH INPUT FORMAT (Accepts a standard 'messages' array per input ID):
 {
   "inputs": [
     {
       "id": "req_001",
-      "filepaths": ["/path/to/person.jpg", "/path/to/package.png"],
-      "texts": ["What is the person doing with the package?", "Are they in a restricted area?"]
+      "messages": [
+        {
+          "role": "system",
+          "content": [
+            {"type": "text", "text": "You are an AI security assistant. Your task is to identify potential threats in the provided images."}
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {"type": "image", "image": "/path/to/person.jpg"},
+            {"type": "image", "image": "/path/to/package.png"},
+            {"type": "text", "text": "What is the person doing with the package? Are they in a restricted area?"}
+          ]
+        }
+      ]
     },
     {
       "id": "req_002",
-      "filepaths": ["/path/to/car.jpg", "/path/to/entrance.jpg"],
-      "texts": ["Describe the vehicle.", "Is the entrance blocked?"]
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {"type": "image", "image": "/path/to/car.jpg"},
+            {"type": "image", "image": "/path/to/entrance.jpg"},
+            {"type": "text", "text": "Describe the vehicle. Is the entrance blocked?"}
+          ]
+        }
+      ]
     }
   ]
 }
 
-BATCH OUTPUT FORMAT (A single description is generated in response to all images/texts for an ID):
+BATCH OUTPUT FORMAT (A single description is generated in response to the messages for an ID):
 {
   "output": [
     {
       "id": "req_001",
-      "description": "The model's answer based on the person/package images and the two questions."
+      "description": "The model's answer based on the provided system prompt, images, and questions."
     },
     {
       "id": "req_002",
@@ -46,10 +68,11 @@ import cv2
 def load_ai_model():
     # Load model with optimizations
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model_name = "HuggingFaceTB/SmolVLM2-256M-Video-Instruct"
-    print(f"Loading {model_name} model on {device}...")
+    # Read model name from environment variable, default to a smaller model
+    model_id = os.getenv("MODEL_ID", "HuggingFaceTB/SmolVLM2-256M-Video-Instruct")
+    print(f"Loading {model_id} model on {device}...")
     
-    processor = AutoProcessor.from_pretrained(model_name)
+    processor = AutoProcessor.from_pretrained(model_id)
     
     # Reduce image size while maintaining aspect ratio
     print(f"Original image size: {processor.image_processor.size}")
@@ -59,7 +82,7 @@ def load_ai_model():
 
     # Optimization trick: Optimal model configuration with float16
     model = AutoModelForImageTextToText.from_pretrained(
-        model_name,
+        model_id,
         torch_dtype=torch.float16 if device == "cuda" else torch.float32
     ).to(device)
     
@@ -67,42 +90,27 @@ def load_ai_model():
         """Simulates a long-running, CPU/GPU-intensive task on the client machine."""
         print(f"[AI Thread] Starting heavy AI workload with data: {data}")
 
-        # Prepare optimized batch of messages and collect image names
-        messages = []
+        # Prepare optimized batch of messages
+        # --- MODIFICATION START ---
+        # The new format passes the 'messages' array directly, which is what the processor expects.
+        # This simplifies the logic significantly.
+        batch_for_processor = []
         message_inputs = data.get('inputs', [])
-        for inp in  message_inputs:
-            # --- MODIFICATION START ---
-            # Initialize an empty list for user content
-            user_content = []
-            
-            if inp.get('filepaths'):
-              # Add all image paths from the input
-              # inp['filepaths'] is expected to be a list of paths
-              for filepath in inp['filepaths']:
-                  user_content.append({"type": "image", "image": str(filepath)})
+        for inp in message_inputs:
+            # Directly append the messages list from the input
+            if 'messages' in inp and isinstance(inp['messages'], list):
+                batch_for_processor.append(inp['messages'])
+            else:
+                print(f"[AI Thread] Warning: Input with id '{inp.get('id')}' is missing a 'messages' list. Skipping.")
+        # --- MODIFICATION END ---
 
-            if inp.get('texts'):
-              # Add all text prompts from the input
-              # inp['texts'] is expected to be a list of strings
-              for text_prompt in inp['texts']:
-                  user_content.append({"type": "text", "text": text_prompt})
-            # --- MODIFICATION END ---
-            
-            message = [
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": "You are a helpful assistant that can understand images."}]
-                },
-                {
-                    "role": "user",
-                    "content": user_content # Use the dynamically built content list
-                }
-            ]
-            messages.append(message)
+        if not batch_for_processor:
+            print("[AI Thread] No valid messages found in the input. Aborting workload.")
+            return json.dumps({"output": []})
 
         # Build inputs (processor returns a dict of tensors)
         inputs = processor.apply_chat_template(
-            messages,
+            batch_for_processor,
             add_generation_prompt=True,
             tokenize=True,
             return_dict=True,

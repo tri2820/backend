@@ -35,46 +35,58 @@ export const table_media_units = await connection.openTable('media_units');
 
 
 
-// let add_media_unit_rows: MediaUnit[] = []
-// let add_media_unit_timeout: NodeJS.Timeout | null = null;
+let write_queue: {
+    type: 'add' | 'update',
+    data: MediaUnit | (Partial<MediaUnit> & { id: string })
+}[] = []
+let write_timeout: NodeJS.Timeout | null = null;
+
+export async function processWriteQueue() {
+    try {
+        const queue = write_queue;
+        write_queue = [];
+        const updates = queue.filter(w => w.type === 'update').map(w => w.data as (Partial<MediaUnit> & { id: string }));
+        const adds = queue.filter(w => w.type === 'add').map(w => w.data as MediaUnit);
+        if (adds.length > 0) {
+            console.log(`Processing write queue immediately with ${adds.length} adds and ${updates.length} updates`);
+            await table_media_units.add(adds);
+        }
+        if (updates.length > 0) {
+            console.log(`Processing write queue immediately with ${adds.length} adds and ${updates.length} updates`);
+            await updateMediaUnitBatch(updates);
+        }
+    } catch (e) {
+        console.error('Error processing write queue inner', e);
+    }
+}
+
+export function processWriteQueue_lazy() {
+    if (write_queue.length === 0) return;
+    if (write_timeout) clearTimeout(write_timeout);
+    if (write_queue.length > 1000) {
+        // If more than 100 items, process immediately
+        processWriteQueue();
+    } else {
+        write_timeout = setTimeout(() => {
+            processWriteQueue();
+        }, 5000);
+    }
+}
+
 export function addMediaUnit(mediaUnit: MediaUnit) {
     try {
-        // FIX BUG: Eagerly add to avoid update when not added
         const addable = {
             ...mediaUnit,
             at_time: new Date(mediaUnit.at_time),
             description: mediaUnit.description ?? null,
             embedding: mediaUnit.embedding ? mediaUnit.embedding : null,
         }
-        table_media_units.add([addable]);
-        // add_media_unit_rows.push({
-        //     ...mediaUnit,
-        //     at_time: new Date(mediaUnit.at_time),
-        //     description: mediaUnit.description ?? null,
-        //     embedding: mediaUnit.embedding ? mediaUnit.embedding : null,
-        // });
 
-        // if (add_media_unit_timeout) clearTimeout(add_media_unit_timeout);
-
-        // // If we have more than 100 rows, add immediately
-        // if (add_media_unit_rows.length > 100) {
-        //     const toAdd = add_media_unit_rows;
-        //     add_media_unit_rows = [];
-        //     console.log(`Adding media unit batch of ${toAdd.length}`);
-        //     table_media_units.add(toAdd);
-        //     return;
-        // }
-
-        // add_media_unit_timeout = setTimeout(async () => {
-        //     try {
-        //         const toAdd = add_media_unit_rows;
-        //         add_media_unit_rows = [];
-        //         console.log(`Adding media unit batch of ${toAdd.length}`);
-        //         await table_media_units.add(toAdd);
-        //     } catch (e) {
-        //         console.error('Error adding media unit batch in timeout', e);
-        //     }
-        // }, 3000);
+        write_queue.push({
+            type: 'add',
+            data: addable
+        });
+        processWriteQueue_lazy();
     } catch (e) {
         console.error('Error adding media unit outer', e);
     }
@@ -99,31 +111,13 @@ export function partialMediaUnitToUpdate(mediaUnit: Partial<MediaUnit> & { id: s
 }
 
 
-let update_media_unit_timeout: NodeJS.Timeout | null = null;
-let update_media_unit_rows: (Partial<MediaUnit> & { id: string })[] = [];
 export async function updateMediaUnit(mediaUnit: Partial<MediaUnit> & { id: string }): Promise<void> {
-    // console.log('Updating media unit', mediaUnit, update_media_unit_rows.length);
     try {
-        update_media_unit_rows.push(mediaUnit);
-
-        if (update_media_unit_timeout) clearTimeout(update_media_unit_timeout);
-        if (update_media_unit_rows.length > 100) {
-            const toUpdate = update_media_unit_rows;
-            update_media_unit_rows = [];
-            console.log(`Updating media unit batch of ${toUpdate.length}`);
-            await updateMediaUnitBatch(toUpdate);
-            return;
-        }
-        update_media_unit_timeout = setTimeout(async () => {
-            try {
-                const toUpdate = update_media_unit_rows;
-                update_media_unit_rows = [];
-                console.log(`Updating media unit batch of ${toUpdate.length}`);
-                await updateMediaUnitBatch(toUpdate);
-            } catch (e) {
-                console.error('Error updating media unit batch in timeout', e);
-            }
-        }, 3000);
+        write_queue.push({
+            type: 'update',
+            data: mediaUnit
+        });
+        processWriteQueue_lazy();
     }
     catch (e) {
         console.error('Error updating media unit outer', e);
@@ -142,8 +136,6 @@ export async function updateMediaUnitBatch(mediaUnits: (Partial<MediaUnit> & { i
             Object.assign(mergedUpdates[id], update);
         }
 
-        console.log(`Merging ${Object.keys(mergedUpdates).length} media unit updates`);
-        console.log(Object.values(mergedUpdates));
         const rowUpdates = Object.values(mergedUpdates);
 
         const result = await table_media_units.mergeInsert("id")
@@ -151,7 +143,7 @@ export async function updateMediaUnitBatch(mediaUnits: (Partial<MediaUnit> & { i
             // ignore unmatched (not inserted)
             .execute(rowUpdates);
 
-        console.log('result', result)
+        console.log('updated media units:', result)
     } catch (error) {
         console.error("Error updating media unit batch:", error);
     }

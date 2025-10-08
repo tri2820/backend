@@ -11,8 +11,8 @@ tmux send-keys -t $SESSION:distributor "cd distributor && bun run index.ts" C-m
 # 2. ADD all other windows to the session that now exists
 
 # # This one is for general indexing tasks with Jina embeddings
-# tmux new-window -t $SESSION -n worker_embedding
-# tmux send-keys -t $SESSION:worker_embedding "cd indexer && WORKER_TYPE=\"embedding\" MAX_LATENCY_MS=\"10000\" uv run --env-file .env python -m worker_embedding" C-m
+tmux new-window -t $SESSION -n worker_embedding
+tmux send-keys -t $SESSION:worker_embedding "cd indexer && WORKER_TYPE=\"embedding\" MAX_LATENCY_MS=\"10000\" uv run --env-file .env python -m worker_embedding" C-m
 
 # This one is for fast, reactive search tasks with Jina embeddings
 tmux new-window -t $SESSION -n worker_fast_embedding
@@ -23,8 +23,8 @@ tmux new-window -t $SESSION -n worker_text_generation
 tmux send-keys -t $SESSION:worker_text_generation "cd indexer && WORKER_TYPE=\"text_generation\" MAX_LATENCY_MS=\"200\" uv run --env-file .env python -m worker_text_generation" C-m
 
 # This one is for fast Q & A / summary with VLM
-tmux new-window -t $SESSION -n worker_fast_vlm
-tmux send-keys -t $SESSION:worker_fast_vlm "cd indexer && WORKER_TYPE=\"fast_vlm\" MAX_LATENCY_MS=\"200\" uv run --env-file .env python -m worker_vlm" C-m
+tmux new-window -t $SESSION -n worker_qa_vlm
+tmux send-keys -t $SESSION:worker_qa_vlm "cd indexer && WORKER_TYPE=\"qa_vlm\" MODEL_ID=\"HuggingFaceTB/SmolVLM2-2.2B-Instruct\" MAX_LATENCY_MS=\"200\" uv run --env-file .env python -m worker_vlm" C-m
 
 # This one is for general indexing tasks
 tmux new-window -t $SESSION -n worker_vlm

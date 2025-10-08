@@ -21,7 +21,22 @@ export async function onTenantConnection(parsed: any, client: Client) {
             media_id: parsed.header.row.media_id,
         });
 
-        const image_description_job = { filepaths: [filepath] };
+        const image_description_job = {
+            messages: [
+                {
+                    role: 'system',
+                    content: [
+                        { type: 'text', text: `Describe the image in detailed. Focus on the object and less on the context.` }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "image", "image": filepath },
+                    ]
+                }
+            ]
+        };
         sendJob(image_description_job, 'vlm', {
             async cont(output) {
                 const message = createMessage({
@@ -29,8 +44,6 @@ export async function onTenantConnection(parsed: any, client: Client) {
                     description: (output as any).description,
                 });
                 client.ws.send(message);
-
-                console.log('Description output', output);
                 const update = { id: parsed.header.id, description: (output as any).description }
                 await updateMediaUnit(update);
             }
