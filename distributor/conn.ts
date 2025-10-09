@@ -20,7 +20,7 @@ export type MediaUnit = {
     tenant_id: string;
     description?: string | null;
     embedding?: number[] | null;
-    at_time: Date;
+    at_time: string;
     media_id: string;
     path: string;
 }
@@ -77,7 +77,7 @@ export function addMediaUnit(mediaUnit: MediaUnit) {
     try {
         const addable = {
             ...mediaUnit,
-            at_time: new Date(mediaUnit.at_time),
+            at_time: new Date(mediaUnit.at_time).toISOString(),
             description: mediaUnit.description ?? null,
             embedding: mediaUnit.embedding ? mediaUnit.embedding : null,
         }
@@ -155,7 +155,7 @@ export async function updateMediaUnitBatch(mediaUnits: (Partial<MediaUnit> & { i
  */
 export async function searchMediaUnitsByEmbedding(queryEmbedding: number[]): Promise<(MediaUnit & { _distance: number })[] | null> {
     try {
-        const results = table_media_units.search(queryEmbedding).where('description IS NOT NULL').limit(20);
+        const results = table_media_units.search(queryEmbedding).where('description IS NOT NULL').limit(200);
         const resultArray = await results.toArray();
         return resultArray;
     } catch (error) {

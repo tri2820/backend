@@ -4,6 +4,7 @@
     "": {
       "name": "distributor",
       "dependencies": {
+        "bun_python": "^0.1.10",
         "jose": "^6.1.0",
       },
       "devDependencies": {
@@ -54,6 +55,8 @@
     "array-back": ["array-back@6.2.2", "", {}, "sha512-gUAZ7HPyb4SJczXAMUXMGAvI976JoK3qEx9v1FTmeYuJj0IBiaKttG1ydtGKdkfqWkIkouke7nG8ufGy77+Cvw=="],
 
     "bun-types": ["bun-types@1.2.23", "", { "dependencies": { "@types/node": "*" }, "peerDependencies": { "@types/react": "^19" } }, "sha512-R9f0hKAZXgFU3mlrA0YpE/fiDvwV0FT9rORApt2aQVWSuJDzZOyB5QLc0N/4HF57CS8IXJ6+L5E4W1bW6NS2Aw=="],
+
+    "bun_python": ["bun_python@0.1.10", "", { "peerDependencies": { "typescript": "^5.7.3" } }, "sha512-6c5owYOI7lYI7lBbYX99L6SQ5dT4jsabsV8yKDX15zi3cRurl/nWO576L3KbSTpGUR8wqQ8TDGRS7Wqwg9gunQ=="],
 
     "chalk": ["chalk@4.1.2", "", { "dependencies": { "ansi-styles": "^4.1.0", "supports-color": "^7.1.0" } }, "sha512-oKnbhFyRIXpUuez8iBMmyEa4nbj4IOQyuhc/wy9kY7/WVPcwIO9VA668Pu8RkO7+0G76SLROeyw9CpQ061i4mA=="],
 

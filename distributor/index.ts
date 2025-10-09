@@ -64,6 +64,7 @@ export function workerFlush(c: Client) {
     }));
 }
 
+console.log("Starting distributor...");
 // This server receives jobs from media server
 // Gather jobs and distribute to workers
 Bun.serve({

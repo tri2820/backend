@@ -11,8 +11,10 @@ export async function initializeDatabase(opts: {
 }): Promise<lancedb.Connection> {
     console.log(`Initializing database at ${opts.databasePath}...`);
     const db = await lancedb.connect(opts.databasePath);
+    console.log("Connected to database.");
     const tableNames = await db.tableNames();
     const tableExists = tableNames.includes('media_units');
+    console.log("Existing tables:", tableNames);
 
     if (opts.overwrite || !tableExists) {
         const schema = new arrow.Schema([
@@ -31,13 +33,21 @@ export async function initializeDatabase(opts: {
     }
 
     try {
-        // No harm in trying to create the index again
-        const table = await db.openTable('media_units');
-        await table.createIndex("embedding");
+        if (process.env.REBUILD_INDEX === '1') {
+            // No harm in trying to create the index again
+            console.log("Creating index on embedding...");
+            const table = await db.openTable('media_units');
+            await table.createIndex("embedding");
+            console.log("Index on embedding created.");
+        } else {
+            console.log("Skipping index creation. Set REBUILD_INDEX=1 to force index creation.");
+        }
     } catch (e) {
         // Ignore if cannot create index
         // Might be due to empty table https://github.com/lancedb/lance/issues/3940
     }
+
+    console.log("Database initialization complete.");
 
     return db;
 }

@@ -1,7 +1,8 @@
 import { sendJob } from "../..";
-import { searchMediaUnitsByEmbedding } from "../../conn";
+import { searchMediaUnitsByEmbedding, type MediaUnit } from "../../conn";
+import { buildClusters } from "../../utils/cluster";
 import { maskedMediaUnit } from "./utils";
-
+import fs from "fs/promises";
 export default async function handleSearchRequest(req: Request): Promise<Response> {
     const json = await req.json() as { query?: string };
     console.log('Handling search request', json);
@@ -32,13 +33,61 @@ export default async function handleSearchRequest(req: Request): Promise<Respons
                 console.log('Embedding output', embd_output);
 
                 const search_result = await searchMediaUnitsByEmbedding((embd_output as any).embedding);
-                const items = search_result?.map(maskedMediaUnit) || [];
+                if (!search_result) {
+                    sendJsonChunk({ error: "Failed to get search results" });
+                    controller.close();
+                    return;
+                }
 
-                console.log(`Found ${items.length} search results`);
-                // Send the first NDJSON object containing the items
-                sendJsonChunk({ items });
+                // group by media_id
+                const groups = search_result.reduce((acc, item) => {
+                    if (!acc[item.media_id]) acc[item.media_id] = [];
+                    acc[item.media_id]!.push(item);
+                    return acc;
+                }, {} as Record<string, (MediaUnit & { _distance: number })[]>);
 
+                type Island = (MediaUnit & { _distance: number })[]
+                // For each group, order by at_time, then scan for islands for consecutive frames within X seconds
+                const X_SECONDS = 5 * 60;
+                const islands: Island[] = [];
+                for (const media_id in groups) {
+                    const items = groups[media_id]!;
+                    items.sort((a, b) => new Date(a.at_time).getTime() - new Date(b.at_time).getTime());
+                    let current_island: Island = [];
+                    for (let i = 0; i < items.length; i++) {
+                        const item = items[i]!;
+                        if (current_island.length === 0) {
+                            current_island.push(item);
+                        } else {
+                            const last_item = current_island[current_island.length - 1]!;
+                            if ((new Date(item.at_time).getTime() - new Date(last_item.at_time).getTime()) <= X_SECONDS * 1000) {
+                                current_island.push(item);
+                            } else {
+                                if (current_island.length > 0) {
+                                    islands.push(current_island);
+                                }
+                                current_island = [item];
+                            }
+                        }
+                    }
+                    if (current_island.length > 0) {
+                        islands.push(current_island);
+                    }
+                }
 
+                // Sort islands by average distance of items in the island
+                islands.sort((a, b) => {
+                    const avgA = a.reduce((sum, item) => sum + item._distance, 0) / a.length;
+                    const avgB = b.reduce((sum, item) => sum + item._distance, 0) / b.length;
+                    return avgA - avgB;
+                });
+
+                // mask out, only get id, at_time, media_id of each item in each island
+                const masked_islands = islands.map(island => island.map(maskedMediaUnit));
+
+                sendJsonChunk({ type: "islands", islands: masked_islands });
+
+                // // TODO: reranker https://huggingface.co/jinaai/jina-reranker-m0
                 // --- Part 2: Fetch and send the summary ---
                 // Use these for summary also
                 const imageContentList = search_result?.slice(0, 5).map(item => ({ type: "image", image: item.path })) ?? [];
@@ -47,19 +96,19 @@ export default async function handleSearchRequest(req: Request): Promise<Respons
                         {
                             role: 'system',
                             content: [
-                                { type: 'text', text: `From given frames of the video, try to answer the query. Answer naturally(do not mention video or frames), substantially and in detailed. Give story-like answer if possible. If there is no relevant information, says no relevant context.` }
+                                { type: 'text', text: `Answer naturally the following query based on the provided context. If there is no relevant information, says no relevant context.` }
                             ]
                         },
                         {
                             role: 'user',
                             content: [
-                                { type: "text", text: `Fly metal thing` }
+                                { type: "text", text: `Do you see any "Fly metal thing"` }
                             ]
                         },
                         {
                             role: 'assistant',
                             content: [
-                                { type: "text", text: `The thing you are looking for is a pendulum, setup inside a lab in California. Swinging back and forth, it creates a mesmerizing motion that captivates the viewer's attention.` }
+                                { type: "text", text: `From the footage, we can see a pendulum, setup inside a lab in California. Swinging back and forth, it creates a mesmerizing motion that captivates the viewer's attention.` }
                             ]
                         },
                         {
@@ -67,7 +116,7 @@ export default async function handleSearchRequest(req: Request): Promise<Respons
                             content: [
                                 {
                                     type: "text",
-                                    text: `Try to find information about "${json.query}". Here are some video frames that might be relevant:`
+                                    text: `Do you see any "${json.query}"?`
                                 },
                                 ...imageContentList
                             ]
@@ -84,7 +133,7 @@ export default async function handleSearchRequest(req: Request): Promise<Respons
                 // The worker returns an object like {id: ..., description: ...}. We only need the description text.
                 const summaryText = (summary_output as any).description;
                 if (summaryText) {
-                    sendJsonChunk({ summary: summaryText });
+                    sendJsonChunk({ type: "summary", summary: summaryText });
                 }
 
                 // All data has been sent, close the stream

@@ -12,6 +12,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "bun_python": "^0.1.10",
     "jose": "^6.1.0"
   }
 }

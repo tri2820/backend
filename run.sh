@@ -6,7 +6,7 @@ tmux kill-session -t $SESSION 2>/dev/null
 
 # 1. CREATE the new detached session, naming the FIRST window "distributor"
 tmux new-session -d -s $SESSION -n distributor
-tmux send-keys -t $SESSION:distributor "cd distributor && bun run index.ts" C-m
+tmux send-keys -t $SESSION:distributor "cd distributor && BUN_PYTHON_PATH=\"/home/tri/.pyenv/versions/3.13.0/lib/libpython3.so\" bun index.ts" C-m
 
 # 2. ADD all other windows to the session that now exists
 
