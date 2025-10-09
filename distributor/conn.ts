@@ -20,7 +20,7 @@ export type MediaUnit = {
     tenant_id: string;
     description?: string | null;
     embedding?: number[] | null;
-    at_time: string;
+    at_time: string | Date;
     media_id: string;
     path: string;
 }
@@ -42,9 +42,9 @@ let write_queue: {
 let write_timeout: NodeJS.Timeout | null = null;
 
 export async function processWriteQueue() {
+    const queue = write_queue;
+    write_queue = [];
     try {
-        const queue = write_queue;
-        write_queue = [];
         const updates = queue.filter(w => w.type === 'update').map(w => w.data as (Partial<MediaUnit> & { id: string }));
         const adds = queue.filter(w => w.type === 'add').map(w => w.data as MediaUnit);
         if (adds.length > 0) {
@@ -56,7 +56,7 @@ export async function processWriteQueue() {
             await updateMediaUnitBatch(updates);
         }
     } catch (e) {
-        console.error('Error processing write queue inner', e);
+        console.error('Error processing write queue inner', e, queue.at(0), queue.at(1));
     }
 }
 
@@ -77,7 +77,7 @@ export function addMediaUnit(mediaUnit: MediaUnit) {
     try {
         const addable = {
             ...mediaUnit,
-            at_time: new Date(mediaUnit.at_time).toISOString(),
+            at_time: new Date(mediaUnit.at_time),
             description: mediaUnit.description ?? null,
             embedding: mediaUnit.embedding ? mediaUnit.embedding : null,
         }

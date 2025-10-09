@@ -1,5 +1,5 @@
-import { sendJob, type Client, type JobMap } from "..";
-import { addMediaUnit, FILES_DIR, updateMediaUnit, updateMediaUnitBatch } from "../conn";
+import { sendJob, type Client } from "..";
+import { addMediaUnit, FILES_DIR, updateMediaUnit } from "../conn";
 import { createMessage } from "../message";
 
 
@@ -40,8 +40,13 @@ export async function onTenantConnection(parsed: any, client: Client) {
         sendJob(image_description_job, 'vlm', {
             async cont(output) {
                 const message = createMessage({
-                    type: 'description',
-                    description: (output as any).description,
+                    type: 'update',
+                    data: {
+                        id: parsed.header.id,
+                        media_id: parsed.header.row.media_id,
+                        at_time: parsed.header.row.at_time,
+                        description: (output as any).description,
+                    }
                 });
                 client.ws.send(message);
                 const update = { id: parsed.header.id, description: (output as any).description }
