@@ -1,9 +1,10 @@
 import { sendJob } from "../..";
+import type { TokenPayload } from "../../auth";
 import { searchMediaUnitsByEmbedding, type MediaUnit } from "../../conn";
 import { buildClusters } from "../../utils/cluster";
 import { maskedMediaUnit } from "./utils";
 import fs from "fs/promises";
-export default async function handleSearchRequest(req: Request): Promise<Response> {
+export default async function handleSearchRequest(req: Request, payload: TokenPayload): Promise<Response> {
     const json = await req.json() as { query?: string };
     console.log('Handling search request', json);
     if (!json || typeof json.query !== "string") {
@@ -32,7 +33,8 @@ export default async function handleSearchRequest(req: Request): Promise<Respons
                 });
                 console.log('Embedding output', embd_output);
 
-                const search_result = await searchMediaUnitsByEmbedding((embd_output as any).embedding);
+                const search_result = await searchMediaUnitsByEmbedding((embd_output as any).embedding, payload.tenant_id);
+                console.log('Search result', search_result?.length, payload);
                 if (!search_result) {
                     sendJsonChunk({ error: "Failed to get search results" });
                     controller.close();

@@ -153,9 +153,9 @@ export async function updateMediaUnitBatch(mediaUnits: (Partial<MediaUnit> & { i
 /**
  * Searches for media units by embedding similarity.
  */
-export async function searchMediaUnitsByEmbedding(queryEmbedding: number[]): Promise<(MediaUnit & { _distance: number })[] | null> {
+export async function searchMediaUnitsByEmbedding(queryEmbedding: number[], tenant_id: string): Promise<(MediaUnit & { _distance: number })[] | null> {
     try {
-        const results = table_media_units.search(queryEmbedding).where('description IS NOT NULL').limit(200);
+        const results = table_media_units.search(queryEmbedding).where(`description IS NOT NULL AND tenant_id = '${tenant_id}'`).limit(200);
         const resultArray = await results.toArray();
         return resultArray;
     } catch (error) {

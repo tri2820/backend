@@ -12,6 +12,8 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.907.0",
+    "@aws-sdk/s3-request-presigner": "^3.907.0",
     "bun_python": "^0.1.10",
     "jose": "^6.1.0"
   }

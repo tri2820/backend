@@ -30,7 +30,7 @@ export default async function handleTenantREST(req: Request): Promise<Response> 
     }
 
     if (req.method === "POST" && url.pathname === "/api/v1/search") {
-        return await handleSearchRequest(req);
+        return await handleSearchRequest(req, verification.payload);
     }
 
     if (req.method === "GET" && url.pathname === "/api/v1/storage") {
